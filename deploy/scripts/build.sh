@@ -1,8 +1,17 @@
 #!/bin/bash
 # Build mini-vllm image in cluster and push to ECR
-# Usage: ./build.sh [tag]
-# Example: ./build.sh latest
-#          ./build.sh v0.1.0
+# Usage: ./build.sh [mode] [tag]
+#
+# Modes:
+#   full  - Full build including CUDA (15-30 min) - default
+#   base  - Build only base image with CUDA (15-30 min, rarely needed)
+#   fast  - Quick build using pre-built base (~1-2 min, Python changes only)
+#
+# Examples:
+#   ./build.sh              # Full build with tag 'latest'
+#   ./build.sh fast         # Fast build (Python only) with tag 'latest'  
+#   ./build.sh base v1.0    # Build base image with tag 'v1.0'
+#   ./build.sh full v0.2    # Full build with tag 'v0.2'
 
 set -e
 
@@ -21,25 +30,46 @@ if [[ -f "$PROJECT_ROOT/deploy/aws/env.sh" ]]; then
     source "$PROJECT_ROOT/deploy/aws/env.sh"
 fi
 
-IMAGE_TAG="${1:-latest}"
-IMAGE_NAME="${MINI_VLLM_PREFIX}server"
-FULL_IMAGE="${MINI_VLLM_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+# Parse arguments
+MODE="full"
+IMAGE_TAG="latest"
+
+if [[ "$1" == "base" || "$1" == "fast" || "$1" == "full" ]]; then
+    MODE="$1"
+    IMAGE_TAG="${2:-latest}"
+else
+    IMAGE_TAG="${1:-latest}"
+fi
+
+# Image names
+SERVER_IMAGE="${MINI_VLLM_REGISTRY}/${MINI_VLLM_PREFIX}server:${IMAGE_TAG}"
+BASE_IMAGE="${MINI_VLLM_REGISTRY}/${MINI_VLLM_PREFIX}base:${IMAGE_TAG}"
 BUILDER_POD="${MINI_VLLM_PREFIX}image-builder"
 
 echo "=========================================="
-echo "Building mini-vLLM (CUDA kernels for H100)"
-echo "Image: $FULL_IMAGE"
-echo "Namespace: $MINI_VLLM_NAMESPACE"
+echo "Building mini-vLLM"
+echo "Mode: $MODE"
+echo "Tag: $IMAGE_TAG"
+if [[ "$MODE" == "base" ]]; then
+    echo "Image: $BASE_IMAGE"
+    echo "Expected time: 15-30 minutes (CUDA compilation)"
+elif [[ "$MODE" == "fast" ]]; then
+    echo "Image: $SERVER_IMAGE"
+    echo "Base: $BASE_IMAGE"
+    echo "Expected time: 1-2 minutes (Python only)"
+else
+    echo "Image: $SERVER_IMAGE"
+    echo "Expected time: 15-30 minutes (CUDA compilation)"
+fi
 echo "=========================================="
 echo ""
-echo "This build compiles CUDA kernels. Expected time: 15-30 minutes."
-echo ""
 
-# Step 1: Ensure builder pod exists with enough resources for CUDA compilation
-echo "[1/6] Checking builder pod..."
-if ! kubectl get pod "$BUILDER_POD" -n "$MINI_VLLM_NAMESPACE" &>/dev/null; then
-    echo "Creating builder pod for CUDA compilation..."
-    cat <<EOF | kubectl apply -n "$MINI_VLLM_NAMESPACE" -f -
+# Ensure builder pod exists
+ensure_builder_pod() {
+    echo "[1/6] Checking builder pod..."
+    if ! kubectl get pod "$BUILDER_POD" -n "$MINI_VLLM_NAMESPACE" &>/dev/null; then
+        echo "Creating builder pod..."
+        cat <<EOF | kubectl apply -n "$MINI_VLLM_NAMESPACE" -f -
 apiVersion: v1
 kind: Pod
 metadata:
@@ -55,102 +85,130 @@ spec:
       privileged: true
     command: ["dockerd-entrypoint.sh"]
     resources:
-      # CUDA compilation needs significant CPU/memory
       requests:
         cpu: "8"
         memory: "32Gi"
-        ephemeral-storage: "50Gi"
       limits:
         cpu: "16"
         memory: "64Gi"
-        ephemeral-storage: "100Gi"
     volumeMounts:
-    - name: docker-storage
+    - name: docker-data
       mountPath: /var/lib/docker
   volumes:
-  - name: docker-storage
-    emptyDir:
-      sizeLimit: 100Gi
+  - name: docker-data
+    emptyDir: {}
   restartPolicy: Never
+  nodeSelector:
+    node.kubernetes.io/instance-type: ml.m5.4xlarge
 EOF
-    
-    echo "Waiting for builder pod (may take 1-2 minutes)..."
-    kubectl wait --for=condition=Ready pod/"$BUILDER_POD" -n "$MINI_VLLM_NAMESPACE" --timeout=300s
-else
-    echo "Builder pod already exists."
-fi
+        echo "Waiting for builder pod to be ready..."
+        kubectl wait --for=condition=Ready pod/"$BUILDER_POD" -n "$MINI_VLLM_NAMESPACE" --timeout=120s
+    else
+        echo "Builder pod already exists."
+    fi
+}
 
-# Step 2: Copy source code
-echo ""
-echo "[2/6] Copying source code to builder..."
-kubectl exec -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- rm -rf /build 2>/dev/null || true
+# Copy source to builder
+copy_source() {
+    echo "[2/6] Copying source code to builder..."
+    echo "  Packaging source..."
+    (cd "$PROJECT_ROOT" && tar cf - \
+        --exclude='__pycache__' \
+        --exclude='*.pyc' \
+        --exclude='.git' \
+        --exclude='*.egg-info' \
+        --exclude='build' \
+        --exclude='dist' \
+        --exclude='.pytest_cache' \
+        --exclude='*.so' \
+        --exclude='.venv' \
+        --exclude='venv' \
+        --exclude='.env' \
+        --exclude='*.log' \
+        --exclude='logs' \
+        --exclude='deploy/aws/credentials.sh' \
+        --exclude='*.tar' \
+        --exclude='*.tar.gz' \
+        .) | kubectl exec -i -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- tar xf - -C /build
+    echo "  Source copied."
+}
+
+# ECR login
+ecr_login() {
+    echo "[3/6] Logging into ECR..."
+    local ECR_PASSWORD=$(aws ecr get-login-password --region "$AWS_REGION")
+    echo "$ECR_PASSWORD" | kubectl exec -i -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- \
+        docker login --username AWS --password-stdin "${MINI_VLLM_REGISTRY%%/*}"
+}
+
+# Build functions
+build_full() {
+    echo "[4/6] Building Docker image (full - with CUDA)..."
+    kubectl exec -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- \
+        docker build -t "$SERVER_IMAGE" -f /build/Dockerfile /build
+}
+
+build_base() {
+    echo "[4/6] Building base image (CUDA only)..."
+    kubectl exec -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- \
+        docker build -t "$BASE_IMAGE" -f /build/Dockerfile.base /build
+}
+
+build_fast() {
+    echo "[4/6] Building fast image (Python only)..."
+    echo "  Using base: $BASE_IMAGE"
+    kubectl exec -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- \
+        docker build -t "$SERVER_IMAGE" -f /build/Dockerfile.fast \
+        --build-arg BASE_IMAGE="$BASE_IMAGE" /build
+}
+
+# Push to ECR
+push_image() {
+    local IMAGE="$1"
+    echo "[5/6] Pushing to ECR: $IMAGE"
+    kubectl exec -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- docker push "$IMAGE"
+}
+
+# Cleanup
+cleanup() {
+    echo "[6/6] Cleaning up..."
+    kubectl exec -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- docker image prune -f || true
+}
+
+# Main execution
+ensure_builder_pod
 kubectl exec -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- mkdir -p /build
+copy_source
+ecr_login
 
-# Tar and copy (excluding unnecessary files)
-echo "  Packaging source..."
-(cd "$PROJECT_ROOT" && tar cf - \
-    --exclude='__pycache__' \
-    --exclude='*.pyc' \
-    --exclude='.git' \
-    --exclude='*.egg-info' \
-    --exclude='build' \
-    --exclude='dist' \
-    --exclude='.pytest_cache' \
-    --exclude='*.so' \
-    --exclude='.venv' \
-    --exclude='venv' \
-    --exclude='.env' \
-    --exclude='*.log' \
-    --exclude='logs' \
-    --exclude='deploy/aws/credentials.sh' \
-    --exclude='*.tar' \
-    --exclude='*.tar.gz' \
-    --exclude='*.whl' \
-    .) | kubectl exec -i -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- tar xf - -C /build
+case "$MODE" in
+    base)
+        build_base
+        push_image "$BASE_IMAGE"
+        ;;
+    fast)
+        build_fast
+        push_image "$SERVER_IMAGE"
+        ;;
+    full)
+        build_full
+        push_image "$SERVER_IMAGE"
+        ;;
+esac
 
-echo "  Source copied."
-
-# Step 3: Login to ECR
-echo ""
-echo "[3/6] Logging into ECR..."
-aws ecr get-login-password --region "$MINI_VLLM_REGISTRY_REGION" | \
-    kubectl exec -i -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- \
-    docker login --username AWS --password-stdin "$MINI_VLLM_REGISTRY"
-
-# Step 4: Build image (CUDA compilation happens here)
-echo ""
-echo "[4/6] Building Docker image with CUDA kernels..."
-echo "  This runs cmake + make inside the container."
-echo "  Watch for nvcc compilation output..."
-echo ""
-
-kubectl exec -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- \
-    docker build \
-    --progress=plain \
-    --build-arg CUDA_VERSION=12.4.1 \
-    --build-arg PYTHON_VERSION=3.11 \
-    --build-arg TORCH_VERSION=2.4.0 \
-    -t "$FULL_IMAGE" \
-    /build
-
-# Step 5: Push to ECR
-echo ""
-echo "[5/6] Pushing to ECR..."
-kubectl exec -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- \
-    docker push "$FULL_IMAGE"
-
-# Step 6: Cleanup
-echo ""
-echo "[6/6] Cleaning up..."
-kubectl exec -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- \
-    docker image prune -f
+cleanup
 
 echo ""
 echo "=========================================="
-echo "SUCCESS: $FULL_IMAGE"
-echo ""
-echo "Deploy with:"
-echo "  ./deploy/scripts/deploy.sh tp2"
-echo "  ./deploy/scripts/deploy.sh tp4"
-echo "  ./deploy/scripts/deploy.sh tp8"
+if [[ "$MODE" == "base" ]]; then
+    echo "SUCCESS: $BASE_IMAGE"
+    echo ""
+    echo "Now use fast builds for Python changes:"
+    echo "  ./build.sh fast"
+else
+    echo "SUCCESS: $SERVER_IMAGE"
+    echo ""
+    echo "Deploy with:"
+    echo "  ./deploy/scripts/deploy.sh tp2"
+fi
 echo "=========================================="

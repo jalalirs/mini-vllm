@@ -1,0 +1,46 @@
+# Mini-vLLM Fast Build: Uses pre-compiled base image
+# Only rebuilds Python layer - takes ~1 min instead of 15-30 min
+#
+# Prerequisites: Build base image first (only when csrc changes):
+#   ./deploy/scripts/build.sh base
+#
+# Build: docker build -f Dockerfile.fast -t mini-vllm:latest .
+
+ARG BASE_IMAGE=972488948509.dkr.ecr.eu-west-2.amazonaws.com/engineering/inference/mini-vllm-base:latest
+
+FROM ${BASE_IMAGE}
+
+# Copy Python code only (CUDA already compiled in base)
+COPY mini_vllm/ /build/mini_vllm/
+
+# Keep the compiled _C.so from base
+# (It's already in /build/mini_vllm/ from base build)
+
+WORKDIR /app
+
+# Copy everything to app
+RUN cp -r /build/mini_vllm /app/mini_vllm && \
+    mkdir -p /app/logs
+
+# Copy launcher
+COPY mini_vllm/launcher.sh /app/launcher.sh
+RUN chmod +x /app/launcher.sh
+
+# Add app to Python path
+ENV PYTHONPATH="/app:${PYTHONPATH}"
+
+# H100 optimizations
+ENV CUDA_VISIBLE_DEVICES=all
+ENV NCCL_DEBUG=WARN
+ENV NCCL_IB_DISABLE=0
+ENV NCCL_NET_GDR_LEVEL=2
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+ENTRYPOINT ["/app/launcher.sh"]
+CMD ["--host", "0.0.0.0", "--port", "8000"]
+

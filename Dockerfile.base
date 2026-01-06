@@ -1,0 +1,69 @@
+# Mini-vLLM Base Image: CUDA kernels pre-compiled
+# This image rarely changes - only rebuild when csrc/ changes
+#
+# Build: docker build -f Dockerfile.base -t mini-vllm-base:latest .
+
+ARG CUDA_VERSION=12.4.1
+ARG PYTHON_VERSION=3.11
+ARG TORCH_VERSION=2.4.0
+
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04
+
+ARG PYTHON_VERSION
+ARG TORCH_VERSION
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python${PYTHON_VERSION} \
+    python${PYTHON_VERSION}-dev \
+    python${PYTHON_VERSION}-venv \
+    python3-pip \
+    cmake \
+    ninja-build \
+    git \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
+    && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python
+
+# Create venv
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install PyTorch
+RUN pip install --upgrade pip wheel && \
+    pip install torch==${TORCH_VERSION} --index-url https://download.pytorch.org/whl/cu124
+
+# Copy ONLY csrc for CUDA compilation
+WORKDIR /build
+COPY mini_vllm/csrc /build/mini_vllm/csrc
+COPY CMakeLists.txt /build/
+
+# Create mini_vllm package directory for output
+RUN mkdir -p /build/mini_vllm
+
+# Compile CUDA
+RUN echo "=======================================" && \
+    echo "COMPILING CUDA KERNELS FOR H100 (SM90)" && \
+    echo "======================================="
+
+RUN mkdir -p /build/build && \
+    cd /build/build && cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_ARCHITECTURES=90
+
+RUN cd /build/build && make VERBOSE=1 -j$(nproc)
+
+# Install Python deps
+RUN pip install \
+    transformers>=4.40.0 \
+    safetensors>=0.4.0 \
+    fastapi>=0.100.0 \
+    uvicorn>=0.23.0 \
+    pydantic>=2.0.0
+
+# Verify CUDA compiled
+RUN ls -la /build/mini_vllm/_C.so
+
