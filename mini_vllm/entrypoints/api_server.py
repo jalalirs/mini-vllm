@@ -301,17 +301,26 @@ def run_server(
         gpu_memory_utilization: GPU memory fraction for KV cache
         max_model_len: Maximum sequence length
     """
-    print("=" * 60)
-    print("Mini-vLLM API Server")
-    print("=" * 60)
-    print(f"  Model: {model}")
-    print(f"  Host: {host}:{port}")
-    print(f"  Tensor Parallel: {tensor_parallel_size}")
-    print(f"  Dtype: {dtype}")
-    print("=" * 60)
+    import os
+    from mini_vllm.distributed import get_tensor_parallel_rank, barrier
     
-    # Initialize engine
-    print("Loading model...")
+    rank = int(os.environ.get("RANK", 0))
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    
+    if rank == 0:
+        print("=" * 60)
+        print("Mini-vLLM API Server")
+        print("=" * 60)
+        print(f"  Model: {model}")
+        print(f"  Host: {host}:{port}")
+        print(f"  Tensor Parallel: {tensor_parallel_size}")
+        print(f"  Dtype: {dtype}")
+        print("=" * 60)
+    
+    # Initialize engine (all ranks participate)
+    if rank == 0:
+        print("Loading model...")
+    
     state.engine = LLMEngine.from_pretrained(
         model_path=model,
         tensor_parallel_size=tensor_parallel_size,
@@ -321,11 +330,20 @@ def run_server(
     )
     state.model_name = model.split("/")[-1]
     
-    print(f"Model loaded. Starting server at {host}:{port}")
-    
-    # Create and run app
-    app = create_app()
-    uvicorn.run(app, host=host, port=port)
+    if rank == 0:
+        print(f"Model loaded. Starting server at {host}:{port}")
+        
+        # Create and run app (only on rank 0)
+        app = create_app()
+        uvicorn.run(app, host=host, port=port)
+    else:
+        # Worker ranks: wait for commands from rank 0
+        print(f"[Rank {rank}] Worker ready, waiting for inference requests...")
+        while True:
+            barrier()  # Sync with rank 0
+            # Worker logic would go here for distributed inference
+            import time
+            time.sleep(1)
 
 
 def main():
