@@ -136,7 +136,7 @@ copy_source() {
 # ECR login
 ecr_login() {
     echo "[3/6] Logging into ECR..."
-    local ECR_PASSWORD=$(aws ecr get-login-password --region "$AWS_REGION")
+    local ECR_PASSWORD=$(aws ecr get-login-password --region "${MINI_VLLM_REGISTRY_REGION:-eu-west-2}")
     echo "$ECR_PASSWORD" | kubectl exec -i -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- \
         docker login --username AWS --password-stdin "${MINI_VLLM_REGISTRY%%/*}"
 }
