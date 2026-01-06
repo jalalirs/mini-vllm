@@ -76,10 +76,9 @@ RUN echo "" && \
     nm -D /build/mini_vllm/_C*.so | grep -E "(paged_attention|rms_norm|silu_and_mul)" | head -20
 
 # =============================================================================
-# Install Python package (without rebuilding CUDA)
+# Install Python dependencies (package installed via copy, not pip)
 # =============================================================================
-RUN pip install --no-build-isolation -e . && \
-    pip install \
+RUN pip install \
         transformers>=4.40.0 \
         safetensors>=0.4.0 \
         fastapi>=0.100.0 \
