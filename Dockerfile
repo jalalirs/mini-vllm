@@ -112,7 +112,13 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY --from=builder /build/cmake_config.log /app/logs/
 COPY --from=builder /build/cuda_build.log /app/logs/
 
+# Copy mini_vllm package (with compiled CUDA extension)
+COPY --from=builder /build/mini_vllm /app/mini_vllm
+
 WORKDIR /app
+
+# Add app directory to Python path
+ENV PYTHONPATH="/app:${PYTHONPATH}"
 
 # =============================================================================
 # H100 Runtime Optimizations
