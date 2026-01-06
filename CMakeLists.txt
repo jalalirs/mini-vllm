@@ -2,13 +2,8 @@ cmake_minimum_required(VERSION 3.18)
 project(mini_vllm_cuda LANGUAGES CXX CUDA)
 
 # =============================================================================
-# H100 CUDA Configuration
+# Find required packages FIRST
 # =============================================================================
-set(CMAKE_CUDA_ARCHITECTURES 90)  # H100 = SM90
-set(CMAKE_CUDA_STANDARD 17)
-set(CMAKE_CXX_STANDARD 17)
-
-# Find required packages
 find_package(CUDAToolkit REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 
@@ -22,11 +17,19 @@ list(APPEND CMAKE_PREFIX_PATH ${TORCH_CMAKE_PREFIX})
 find_package(Torch REQUIRED)
 
 # =============================================================================
-# Compiler Flags
+# H100 CUDA Configuration - MUST be set AFTER find_package(Torch)
 # =============================================================================
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 --use_fast_math -lineinfo")
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_90,code=sm_90")
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_90a,code=sm_90a")
+# Force H100 only - override anything PyTorch set
+set(CMAKE_CUDA_ARCHITECTURES "90" CACHE STRING "CUDA architectures" FORCE)
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CXX_STANDARD 17)
+
+# Clear any inherited flags and set our own
+set(CMAKE_CUDA_FLAGS "-O3 --use_fast_math -lineinfo")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr")
+
+# ONLY H100 (SM90) - no other architectures
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode=arch=compute_90,code=sm_90")
 
 # Half precision support
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -DCUDA_HAS_FP16=1")
@@ -35,7 +38,7 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -U__CUDA_NO_HALF_CONVERSIONS__")
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -U__CUDA_NO_BFLOAT16_CONVERSIONS__")
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -U__CUDA_NO_HALF2_OPERATORS__")
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fPIC")
 
 # =============================================================================
 # Include Directories
@@ -81,17 +84,19 @@ set(CUDA_SOURCES
 # =============================================================================
 add_library(mini_vllm_cuda SHARED ${CUDA_SOURCES})
 
+# Force architecture on target level as well
+set_target_properties(mini_vllm_cuda PROPERTIES
+    CUDA_ARCHITECTURES "90"
+    OUTPUT_NAME "_C"
+    PREFIX ""
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/mini_vllm
+    POSITION_INDEPENDENT_CODE ON
+)
+
 target_link_libraries(mini_vllm_cuda
     ${TORCH_LIBRARIES}
     ${Python3_LIBRARIES}
     CUDA::cudart
-)
-
-# Set output name and location
-set_target_properties(mini_vllm_cuda PROPERTIES
-    OUTPUT_NAME "_C"
-    PREFIX ""
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/mini_vllm
 )
 
 # For torch extension compatibility
@@ -100,18 +105,12 @@ target_compile_definitions(mini_vllm_cuda PRIVATE
 )
 
 # =============================================================================
-# Install
-# =============================================================================
-install(TARGETS mini_vllm_cuda
-    LIBRARY DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/mini_vllm
-)
-
-# =============================================================================
 # Print Configuration
 # =============================================================================
 message(STATUS "")
 message(STATUS "=== Mini-vLLM CUDA Build Configuration ===")
 message(STATUS "CUDA Architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+message(STATUS "CUDA Flags: ${CMAKE_CUDA_FLAGS}")
 message(STATUS "CUDA Compiler: ${CMAKE_CUDA_COMPILER}")
 message(STATUS "CUDA Version: ${CUDAToolkit_VERSION}")
 message(STATUS "PyTorch: ${TORCH_CMAKE_PREFIX}")
@@ -119,4 +118,3 @@ message(STATUS "Python: ${Python3_EXECUTABLE}")
 message(STATUS "Output: ${CMAKE_CURRENT_SOURCE_DIR}/mini_vllm/_C.so")
 message(STATUS "==========================================")
 message(STATUS "")
-
