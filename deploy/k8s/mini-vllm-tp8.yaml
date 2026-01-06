@@ -83,14 +83,18 @@ spec:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 90
+          initialDelaySeconds: 300
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
         livenessProbe:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 180
+          initialDelaySeconds: 600
           periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 10
       volumes:
       - name: fsx-models
         persistentVolumeClaim:
