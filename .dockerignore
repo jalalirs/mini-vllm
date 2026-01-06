@@ -1,0 +1,67 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info
+dist
+build
+eggs
+.eggs
+*.manifest
+*.spec
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Build artifacts
+build/
+*.o
+*.a
+*.lib
+
+# Logs
+*.log
+logs/
+
+# Deploy secrets
+deploy/aws/credentials.sh
+
+# Documentation
+*.md
+!README.md
+
+# Tests
+tests/
+test/
+*_test.py
+test_*.py
+
+# Large/unnecessary files
+*.tar
+*.tar.gz
+*.zip
+*.rar
+*.7z
+*.whl
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+

@@ -97,6 +97,15 @@ echo "  Packaging source..."
     --exclude='dist' \
     --exclude='.pytest_cache' \
     --exclude='*.so' \
+    --exclude='.venv' \
+    --exclude='venv' \
+    --exclude='.env' \
+    --exclude='*.log' \
+    --exclude='logs' \
+    --exclude='deploy/aws/credentials.sh' \
+    --exclude='*.tar' \
+    --exclude='*.tar.gz' \
+    --exclude='*.whl' \
     .) | kubectl exec -i -n "$MINI_VLLM_NAMESPACE" "$BUILDER_POD" -- tar xf - -C /build
 
 echo "  Source copied."
