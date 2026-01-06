@@ -61,13 +61,13 @@ case "$ACTION" in
         echo "Applying manifest..."
         envsubst < "$MANIFEST" | kubectl apply -n "$MINI_VLLM_NAMESPACE" -f -
         
-        echo "Waiting for deployment..."
-        kubectl rollout status deployment/"$DEPLOYMENT_NAME" -n "$MINI_VLLM_NAMESPACE" --timeout=600s || true
-        
-        # Get pod status
+        # Show status immediately (don't block waiting)
+        sleep 2
         echo ""
         echo "Pod status:"
-        kubectl get pods -n "$MINI_VLLM_NAMESPACE" -l app="$DEPLOYMENT_NAME"
+        kubectl get pods -n "$MINI_VLLM_NAMESPACE" -l app="$DEPLOYMENT_NAME" -o wide
+        echo ""
+        echo "Monitor logs with: ./deploy/scripts/monitor.sh ${TP_CONFIG}"
         ;;
     
     delete)
