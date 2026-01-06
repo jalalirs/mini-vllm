@@ -1,0 +1,104 @@
+# Mini-vLLM Deployment - Tensor Parallel 2
+# Deploy: kubectl apply -f mini-vllm-tp2.yaml -n hyperpod-ns-inference
+# Delete: kubectl delete -f mini-vllm-tp2.yaml -n hyperpod-ns-inference
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${MINI_VLLM_PREFIX}gptoss-tp2
+  namespace: ${MINI_VLLM_NAMESPACE}
+  labels:
+    app: ${MINI_VLLM_PREFIX}gptoss-tp2
+    kueue.x-k8s.io/queue-name: "${MINI_VLLM_KUEUE_QUEUE}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${MINI_VLLM_PREFIX}gptoss-tp2
+  template:
+    metadata:
+      labels:
+        app: ${MINI_VLLM_PREFIX}gptoss-tp2
+        kueue.x-k8s.io/queue-name: "${MINI_VLLM_KUEUE_QUEUE}"
+    spec:
+      nodeSelector:
+        node.kubernetes.io/instance-type: ${MINI_VLLM_NODE_TYPE}
+      containers:
+      - name: mini-vllm
+        image: ${MINI_VLLM_REGISTRY}/${MINI_VLLM_PREFIX}server:latest
+        imagePullPolicy: Always
+        args:
+        - --model
+        - ${MINI_VLLM_MODEL_PATH}
+        - --tensor-parallel-size
+        - "2"
+        - --host
+        - "0.0.0.0"
+        - --port
+        - "8000"
+        - --dtype
+        - "bfloat16"
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0,1"
+        - name: NCCL_DEBUG
+          value: "WARN"
+        - name: NCCL_IB_DISABLE
+          value: "0"
+        - name: NCCL_NET_GDR_LEVEL
+          value: "2"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "expandable_segments:True"
+        volumeMounts:
+        - name: fsx-models
+          mountPath: /mnt/fsx
+        - name: shm
+          mountPath: /dev/shm
+        resources:
+          requests:
+            nvidia.com/gpu: 2
+            memory: "64Gi"
+            cpu: "8"
+          limits:
+            nvidia.com/gpu: 2
+            memory: "128Gi"
+            cpu: "16"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 120
+          periodSeconds: 30
+      volumes:
+      - name: fsx-models
+        persistentVolumeClaim:
+          claimName: ${MINI_VLLM_FSX_PVC}
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${MINI_VLLM_PREFIX}gptoss-tp2
+  namespace: ${MINI_VLLM_NAMESPACE}
+spec:
+  selector:
+    app: ${MINI_VLLM_PREFIX}gptoss-tp2
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+  type: ClusterIP
+

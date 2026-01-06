@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-vllm"
+version = "0.1.0"
+description = "Minimal LLM inference engine for GPT-OSS on H100"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+
+dependencies = [
+    "torch>=2.4.0",
+    "transformers>=4.40.0",
+    "safetensors>=0.4.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+mini-vllm = "mini_vllm.entrypoints.api_server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mini_vllm*"]
