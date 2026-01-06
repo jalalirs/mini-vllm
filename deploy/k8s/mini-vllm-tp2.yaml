@@ -42,6 +42,17 @@ spec:
         - containerPort: 8000
           name: http
         env:
+        # Distributed settings for single-pod multi-GPU
+        - name: MASTER_ADDR
+          value: "127.0.0.1"
+        - name: MASTER_PORT
+          value: "29500"
+        - name: WORLD_SIZE
+          value: "2"
+        - name: RANK
+          value: "0"
+        - name: LOCAL_RANK
+          value: "0"
         - name: CUDA_VISIBLE_DEVICES
           value: "0,1"
         - name: NCCL_DEBUG
