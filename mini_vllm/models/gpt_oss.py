@@ -64,16 +64,24 @@ class GptOssConfig:
         self.sliding_window = sliding_window
         self.tie_word_embeddings = tie_word_embeddings
         
-        # YARN RoPE parameters
-        self.rope_parameters = rope_scaling or {
-            "rope_theta": rope_theta,
-            "rope_type": "yarn",
-            "factor": 4.0,
-            "original_max_position_embeddings": 32768,
-            "beta_fast": 32,
-            "beta_slow": 1,
-            "truncate": True,
-        }
+        # Handle rope_parameters from config (may come as kwarg)
+        rope_params = kwargs.get("rope_parameters", rope_scaling)
+        
+        # YARN RoPE parameters - ensure rope_theta is always present
+        if rope_params:
+            self.rope_parameters = rope_params
+            if "rope_theta" not in self.rope_parameters:
+                self.rope_parameters["rope_theta"] = rope_theta
+        else:
+            self.rope_parameters = {
+                "rope_theta": rope_theta,
+                "rope_type": "yarn",
+                "factor": 4.0,
+                "original_max_position_embeddings": 32768,
+                "beta_fast": 32,
+                "beta_slow": 1,
+                "truncate": True,
+            }
 
 
 class OAIAttention(nn.Module):
