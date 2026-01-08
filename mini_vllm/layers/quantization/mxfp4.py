@@ -142,6 +142,7 @@ class Mxfp4MoEMethod:
         )
         layer.register_parameter("w2_bias", w2_bias)
         
+        logger.info("Using Triton backend")
         logger.info(
             f"Created MXFP4 MoE weights: E={E}, N={N}, K={K}, "
             f"w13=[{E}, {2*N}, {K//2}], w2=[{E}, {K}, {N//2}]"
