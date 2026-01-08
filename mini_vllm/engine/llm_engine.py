@@ -305,9 +305,13 @@ class LLMEngine:
         tp_rank: int,
         tp_size: int,
     ):
-        """Simple weight loading - loads matching params directly.
+        """Load weights with proper sharding and name mapping.
         
-        This is a fallback that tries to load as much as possible.
+        Handles:
+        - Tensor parallel sharding for column/row parallel layers
+        - QKV weight stacking
+        - MXFP4 quantized weights
+        - MoE expert weights
         """
         import os
         import glob
@@ -320,62 +324,236 @@ class LLMEngine:
         config = model.config
         use_mxfp4 = getattr(config, 'use_mxfp4', False)
         
-        print(f"[Rank {tp_rank}] Simple loading, MXFP4={use_mxfp4}, TP={tp_size}")
+        print(f"[Rank {tp_rank}] Loading weights with full sharding, MXFP4={use_mxfp4}, TP={tp_size}")
         
-        # Get model params
         params_dict = dict(model.named_parameters())
-        print(f"[Rank {tp_rank}] Model has {len(params_dict)} parameters")
-        
-        # Sample param names for debugging
-        sample_params = list(params_dict.keys())[:10]
-        print(f"[Rank {tp_rank}] Sample params: {sample_params}")
-        
-        # First, scan checkpoint to see what's there
-        ckpt_names = set()
-        for file_path in safetensors_files[:1]:  # Just check first file
-            with safe_open(file_path, framework="pt", device="cpu") as f:
-                sample_ckpt = list(f.keys())[:10]
-                print(f"[Rank {tp_rank}] Sample checkpoint keys: {sample_ckpt}")
-                for key in f.keys():
-                    ckpt_names.add(key)
-        
-        # Try to load by direct name matching
         loaded = 0
-        for file_idx, file_path in enumerate(safetensors_files):
+        loaded_names = set()
+        
+        # MXFP4 parameters for sharding
+        mxfp4_block = 32
+        num_experts = config.num_local_experts
+        intermediate_size = config.intermediate_size
+        
+        # Calculate TP slicing for MXFP4 
+        per_rank_intermediate = intermediate_size // tp_size
+        tp_rank_start = tp_rank * per_rank_intermediate
+        tp_rank_end = (tp_rank + 1) * per_rank_intermediate
+        
+        # Patterns for TP sharding
+        column_parallel = ["q_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "lm_head", "embed_tokens"]
+        row_parallel = ["o_proj", "down_proj"]
+        head_parallel = ["sinks"]  # Attention sinks are sharded by head
+        
+        # QKV buffer to stack q/k/v weights
+        qkv_buffers = {}  # layer_idx -> {q, k, v}
+        
+        for file_path in safetensors_files:
             fname = os.path.basename(file_path)
+            print(f"[Rank {tp_rank}] Processing {fname}")
+            
             with safe_open(file_path, framework="pt", device="cpu") as f:
                 for ckpt_name in f.keys():
-                    # Try direct match
-                    param_name = LLMEngine._map_ckpt_to_param_name(ckpt_name)
+                    tensor = f.get_tensor(ckpt_name)
                     
-                    if param_name in params_dict:
-                        param = params_dict[param_name]
-                        tensor = f.get_tensor(ckpt_name)
-                        
-                        # Check shapes
-                        if tensor.shape != param.shape:
-                            # Might need sharding
-                            print(f"[Rank {tp_rank}] Shape mismatch for {param_name}: ckpt={tensor.shape}, param={param.shape}")
-                            continue
-                        
+                    # Handle QKV projection stacking
+                    if any(x in ckpt_name for x in ["q_proj", "k_proj", "v_proj"]):
+                        loaded += LLMEngine._handle_qkv_weight(
+                            ckpt_name, tensor, params_dict, qkv_buffers, 
+                            tp_rank, tp_size, dtype, loaded_names
+                        )
+                        del tensor
+                        continue
+                    
+                    # Handle MoE expert weights
+                    if ".mlp.experts." in ckpt_name:
+                        loaded += LLMEngine._handle_moe_weight(
+                            ckpt_name, tensor, params_dict, 
+                            tp_rank, tp_size, dtype, loaded_names,
+                            num_experts, intermediate_size, mxfp4_block, use_mxfp4
+                        )
+                        del tensor
+                        continue
+                    
+                    # Map checkpoint name to param name
+                    param_name = LLMEngine._map_ckpt_to_param_name(ckpt_name)
+                    if param_name not in params_dict:
+                        continue
+                    
+                    param = params_dict[param_name]
+                    
+                    # Apply TP sharding
+                    if tp_size > 1:
+                        tensor = LLMEngine._apply_tp_sharding(
+                            tensor, ckpt_name, tp_rank, tp_size,
+                            column_parallel, row_parallel, head_parallel
+                        )
+                    
+                    # Copy to parameter
+                    if tensor.shape == param.shape:
                         param.data.copy_(tensor.to(dtype))
                         loaded += 1
-                        del tensor
+                        loaded_names.add(param_name)
+                    
+                    del tensor
         
-        print(f"[Rank {tp_rank}] Loaded {loaded} params directly")
+        print(f"[Rank {tp_rank}] Loaded {loaded} parameters")
         
-        # Report what's missing
-        loaded_names = set()
-        for fname in safetensors_files:
-            with safe_open(fname, framework="pt", device="cpu") as f:
-                for key in f.keys():
-                    pname = LLMEngine._map_ckpt_to_param_name(key)
-                    if pname in params_dict:
-                        loaded_names.add(pname)
-        
+        # Report missing
         missing = set(params_dict.keys()) - loaded_names
         if missing:
-            print(f"[Rank {tp_rank}] Missing {len(missing)} params: {list(missing)[:10]}...")
+            print(f"[Rank {tp_rank}] Missing {len(missing)} params")
+    
+    @staticmethod
+    def _handle_qkv_weight(
+        ckpt_name: str,
+        tensor: torch.Tensor,
+        params_dict: dict,
+        qkv_buffers: dict,
+        tp_rank: int,
+        tp_size: int,
+        dtype: torch.dtype,
+        loaded_names: set,
+    ) -> int:
+        """Handle Q/K/V weight stacking into qkv_proj."""
+        import re
+        
+        # Extract layer index
+        match = re.search(r'layers\.(\d+)', ckpt_name)
+        if not match:
+            return 0
+        layer_idx = int(match.group(1))
+        
+        # Determine which weight (q, k, or v)
+        if "q_proj" in ckpt_name:
+            weight_type = "q"
+        elif "k_proj" in ckpt_name:
+            weight_type = "k"
+        elif "v_proj" in ckpt_name:
+            weight_type = "v"
+        else:
+            return 0
+        
+        # Shard along output dimension (column parallel)
+        if tp_size > 1:
+            shard_size = tensor.shape[0] // tp_size
+            tensor = tensor[tp_rank * shard_size : (tp_rank + 1) * shard_size].contiguous()
+        
+        # Store in buffer
+        if layer_idx not in qkv_buffers:
+            qkv_buffers[layer_idx] = {}
+        qkv_buffers[layer_idx][weight_type] = tensor
+        
+        # Check if we have all three
+        if len(qkv_buffers[layer_idx]) == 3:
+            q = qkv_buffers[layer_idx]["q"]
+            k = qkv_buffers[layer_idx]["k"]
+            v = qkv_buffers[layer_idx]["v"]
+            
+            # Stack QKV (concat along dim 0)
+            qkv = torch.cat([q, k, v], dim=0)
+            
+            # Find target parameter
+            param_name = f"model.layers.{layer_idx}.attn.qkv_proj.weight"
+            if param_name in params_dict:
+                param = params_dict[param_name]
+                if qkv.shape == param.shape:
+                    param.data.copy_(qkv.to(dtype))
+                    loaded_names.add(param_name)
+                    del qkv_buffers[layer_idx]
+                    return 1
+        
+        return 0
+    
+    @staticmethod
+    def _handle_moe_weight(
+        ckpt_name: str,
+        tensor: torch.Tensor,
+        params_dict: dict,
+        tp_rank: int,
+        tp_size: int,
+        dtype: torch.dtype,
+        loaded_names: set,
+        num_experts: int,
+        intermediate_size: int,
+        mxfp4_block: int,
+        use_mxfp4: bool,
+    ) -> int:
+        """Handle MoE expert weight loading with sharding."""
+        # Map checkpoint name to param name
+        param_name = ckpt_name.replace("self_attn", "attn")
+        
+        if param_name not in params_dict:
+            return 0
+        
+        param = params_dict[param_name]
+        
+        # Apply sharding for MXFP4 weights
+        if use_mxfp4 and ("w13_weight" in ckpt_name or "w2_weight" in ckpt_name):
+            per_rank = intermediate_size // tp_size
+            tp_start = tp_rank * per_rank
+            tp_end = (tp_rank + 1) * per_rank
+            
+            if ".w13_weight_scale" in ckpt_name:
+                tensor = tensor[:, 2 * tp_start : 2 * tp_end, ...]
+            elif ".w2_weight_scale" in ckpt_name:
+                tp_start_block = tp_start // mxfp4_block
+                tp_end_block = tp_end // mxfp4_block
+                tensor = tensor[..., tp_start_block : tp_end_block]
+            elif ".w13_weight" in ckpt_name:
+                tensor = tensor.view(num_experts, 2 * intermediate_size, -1)
+                tensor = tensor[:, 2 * tp_start : 2 * tp_end, ...]
+            elif ".w2_weight" in ckpt_name:
+                tensor = tensor.view(num_experts, -1, intermediate_size // 2)
+                tensor = tensor[..., tp_start // 2 : tp_end // 2]
+            
+            tensor = tensor.contiguous()
+            
+            # Don't convert dtype for quantized weights
+            if tensor.shape == param.shape:
+                param.data.copy_(tensor)
+                loaded_names.add(param_name)
+                return 1
+        else:
+            # Non-MXFP4 or bias
+            if ".w13_bias" in ckpt_name:
+                per_rank = intermediate_size // tp_size
+                tensor = tensor[:, 2 * tp_rank * per_rank : 2 * (tp_rank + 1) * per_rank]
+            
+            if tensor.shape == param.shape:
+                param.data.copy_(tensor.to(dtype))
+                loaded_names.add(param_name)
+                return 1
+        
+        return 0
+    
+    @staticmethod
+    def _apply_tp_sharding(
+        tensor: torch.Tensor,
+        name: str,
+        tp_rank: int,
+        tp_size: int,
+        column_parallel: list,
+        row_parallel: list,
+        head_parallel: list,
+    ) -> torch.Tensor:
+        """Apply tensor parallel sharding."""
+        for pattern in column_parallel:
+            if pattern in name:
+                shard_size = tensor.shape[0] // tp_size
+                return tensor[tp_rank * shard_size : (tp_rank + 1) * shard_size].contiguous()
+        
+        for pattern in row_parallel:
+            if pattern in name:
+                shard_size = tensor.shape[-1] // tp_size
+                return tensor[..., tp_rank * shard_size : (tp_rank + 1) * shard_size].contiguous()
+        
+        for pattern in head_parallel:
+            if pattern in name:
+                shard_size = tensor.shape[0] // tp_size
+                return tensor[tp_rank * shard_size : (tp_rank + 1) * shard_size].contiguous()
+        
+        return tensor
     
     @staticmethod
     def _shard_mxfp4_weight(
