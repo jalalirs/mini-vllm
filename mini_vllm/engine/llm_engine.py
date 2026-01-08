@@ -147,8 +147,8 @@ class LLMEngine:
         # Create model
         model = GptOssForCausalLM(config)
         
-        # Load weights
-        cls._load_weights(model, model_path, device, torch_dtype, rank, tensor_parallel_size)
+        # Load weights - use simple loader for debugging
+        cls._load_weights_simple(model, model_path, device, torch_dtype, rank, tensor_parallel_size)
         
         model = model.to(device).to(torch_dtype)
         model.eval()
@@ -195,7 +195,10 @@ class LLMEngine:
         tp_rank: int,
         tp_size: int,
     ):
-        """Load model weights with MXFP4 and tensor parallel support."""
+        """Load model weights with MXFP4 and tensor parallel support.
+        
+        Uses streaming loading to minimize memory usage.
+        """
         import os
         import glob
         from safetensors import safe_open
@@ -232,12 +235,23 @@ class LLMEngine:
         # MXFP4 weight patterns (do NOT convert dtype)
         mxfp4_patterns = [".w13_weight", ".w2_weight", ".w13_weight_scale", ".w2_weight_scale"]
         
-        state_dict = {}
-        loaded_count = 0
+        # Build name mapping from checkpoint to model params
+        params_dict = dict(model.named_parameters())
         
-        for file_path in safetensors_files:
+        loaded_count = 0
+        file_count = len(safetensors_files)
+        
+        for file_idx, file_path in enumerate(safetensors_files):
+            print(f"[Rank {tp_rank}] Loading file {file_idx+1}/{file_count}: {os.path.basename(file_path)}")
+            
             with safe_open(file_path, framework="pt", device="cpu") as f:
                 for name in f.keys():
+                    # Find corresponding parameter
+                    param_name = LLMEngine._map_ckpt_to_param_name(name)
+                    if param_name not in params_dict:
+                        continue
+                    
+                    param = params_dict[param_name]
                     tensor = f.get_tensor(name)
                     
                     # Check if this is an MXFP4 weight
@@ -256,25 +270,112 @@ class LLMEngine:
                             intermediate_size=intermediate_size,
                             mxfp4_block=mxfp4_block,
                         )
-                        state_dict[name] = tensor  # Keep original dtype (uint8)
+                        # Direct copy into parameter
+                        param.data.copy_(tensor)
                     else:
                         # Handle regular weights
                         if tp_size > 1:
                             tensor = LLMEngine._shard_weight(
                                 tensor, name, tp_rank, tp_size, column_parallel, row_parallel
                             )
-                        state_dict[name] = tensor.to(dtype)
+                        # Direct copy into parameter
+                        param.data.copy_(tensor.to(dtype))
                     
                     loaded_count += 1
+                    
+                    # Free memory immediately
+                    del tensor
         
         print(f"[Rank {tp_rank}] Loaded {loaded_count} weight tensors")
+    
+    @staticmethod
+    def _map_ckpt_to_param_name(name: str) -> str:
+        """Map checkpoint tensor name to model parameter name."""
+        # Most names map directly, but some need adjustment
+        # self_attn -> attn
+        name = name.replace("self_attn", "attn")
+        return name
+    
+    @staticmethod
+    def _load_weights_simple(
+        model: GptOssForCausalLM,
+        model_path: str,
+        device: torch.device,
+        dtype: torch.dtype,
+        tp_rank: int,
+        tp_size: int,
+    ):
+        """Simple weight loading - loads matching params directly.
         
-        # Load into model
-        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        This is a fallback that tries to load as much as possible.
+        """
+        import os
+        import glob
+        from safetensors import safe_open
+        
+        safetensors_files = sorted(glob.glob(os.path.join(model_path, "*.safetensors")))
+        if not safetensors_files:
+            raise FileNotFoundError(f"No safetensors files found in {model_path}")
+        
+        config = model.config
+        use_mxfp4 = getattr(config, 'use_mxfp4', False)
+        
+        print(f"[Rank {tp_rank}] Simple loading, MXFP4={use_mxfp4}, TP={tp_size}")
+        
+        # Get model params
+        params_dict = dict(model.named_parameters())
+        print(f"[Rank {tp_rank}] Model has {len(params_dict)} parameters")
+        
+        # Sample param names for debugging
+        sample_params = list(params_dict.keys())[:10]
+        print(f"[Rank {tp_rank}] Sample params: {sample_params}")
+        
+        # First, scan checkpoint to see what's there
+        ckpt_names = set()
+        for file_path in safetensors_files[:1]:  # Just check first file
+            with safe_open(file_path, framework="pt", device="cpu") as f:
+                sample_ckpt = list(f.keys())[:10]
+                print(f"[Rank {tp_rank}] Sample checkpoint keys: {sample_ckpt}")
+                for key in f.keys():
+                    ckpt_names.add(key)
+        
+        # Try to load by direct name matching
+        loaded = 0
+        for file_idx, file_path in enumerate(safetensors_files):
+            fname = os.path.basename(file_path)
+            with safe_open(file_path, framework="pt", device="cpu") as f:
+                for ckpt_name in f.keys():
+                    # Try direct match
+                    param_name = LLMEngine._map_ckpt_to_param_name(ckpt_name)
+                    
+                    if param_name in params_dict:
+                        param = params_dict[param_name]
+                        tensor = f.get_tensor(ckpt_name)
+                        
+                        # Check shapes
+                        if tensor.shape != param.shape:
+                            # Might need sharding
+                            print(f"[Rank {tp_rank}] Shape mismatch for {param_name}: ckpt={tensor.shape}, param={param.shape}")
+                            continue
+                        
+                        param.data.copy_(tensor.to(dtype))
+                        loaded += 1
+                        del tensor
+        
+        print(f"[Rank {tp_rank}] Loaded {loaded} params directly")
+        
+        # Report what's missing
+        loaded_names = set()
+        for fname in safetensors_files:
+            with safe_open(fname, framework="pt", device="cpu") as f:
+                for key in f.keys():
+                    pname = LLMEngine._map_ckpt_to_param_name(key)
+                    if pname in params_dict:
+                        loaded_names.add(pname)
+        
+        missing = set(params_dict.keys()) - loaded_names
         if missing:
-            print(f"[Rank {tp_rank}] Missing keys: {len(missing)}")
-        if unexpected:
-            print(f"[Rank {tp_rank}] Unexpected keys: {len(unexpected)}")
+            print(f"[Rank {tp_rank}] Missing {len(missing)} params: {list(missing)[:10]}...")
     
     @staticmethod
     def _shard_mxfp4_weight(
