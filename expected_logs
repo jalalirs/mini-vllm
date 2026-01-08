@@ -1,0 +1,145 @@
+(APIServer pid=1) INFO 01-07 04:03:16 [api_server.py:1351] vLLM API server version 0.13.0                                              │
+│ (APIServer pid=1) INFO 01-07 04:03:16 [utils.py:253] non-default args: {'model_tag': '/mnt/fsx/inference/models/gpt-oss-120b', 'host': │
+│ (APIServer pid=1) INFO 01-07 04:03:22 [model.py:514] Resolved architecture: GptOssForCausalLM                                          │
+│ (APIServer pid=1) ERROR 01-07 04:03:22 [repo_utils.py:65] Error retrieving safetensors: Repo id must be in the form 'repo_name' or 'na │
+│ (APIServer pid=1) ERROR 01-07 04:03:24 [repo_utils.py:63] Error retrieving safetensors: Repo id must be in the form 'repo_name' or 'na │
+│ (APIServer pid=1) INFO 01-07 04:03:24 [model.py:2002] Downcasting torch.float32 to torch.bfloat16.                                     │
+│ (APIServer pid=1) INFO 01-07 04:03:24 [model.py:1661] Using max model len 131072                                                       │
+│ (APIServer pid=1) INFO 01-07 04:03:25 [scheduler.py:230] Chunked prefill is enabled with max_num_batched_tokens=8192.                  │
+│ (APIServer pid=1) INFO 01-07 04:03:25 [config.py:271] Overriding max cuda graph capture size to 1024 for performance.                  │
+│ (EngineCore_DP0 pid=271) INFO 01-07 04:03:33 [core.py:93] Initializing a V1 LLM engine (v0.13.0) with config: model='/mnt/fsx/inferenc │
+│ (EngineCore_DP0 pid=271) WARNING 01-07 04:03:33 [multiproc_executor.py:882] Reducing Torch parallelism from 96 threads to 1 to avoid u │
+│ INFO 01-07 04:03:46 [parallel_state.py:1203] world_size=8 rank=0 local_rank=0 distributed_init_method=tcp://127.0.0.1:56481 backend=nc │
+│ INFO 01-07 04:03:46 [parallel_state.py:1203] world_size=8 rank=2 local_rank=2 distributed_init_method=tcp://127.0.0.1:56481 backend=nc │
+│ INFO 01-07 04:03:46 [parallel_state.py:1203] world_size=8 rank=5 local_rank=5 distributed_init_method=tcp://127.0.0.1:56481 backend=nc │
+│ INFO 01-07 04:03:46 [parallel_state.py:1203] world_size=8 rank=4 local_rank=4 distributed_init_method=tcp://127.0.0.1:56481 backend=nc │
+│ INFO 01-07 04:03:46 [parallel_state.py:1203] world_size=8 rank=1 local_rank=1 distributed_init_method=tcp://127.0.0.1:56481 backend=nc │
+│ INFO 01-07 04:03:46 [parallel_state.py:1203] world_size=8 rank=7 local_rank=7 distributed_init_method=tcp://127.0.0.1:56481 backend=nc │
+│ INFO 01-07 04:03:46 [parallel_state.py:1203] world_size=8 rank=6 local_rank=6 distributed_init_method=tcp://127.0.0.1:56481 backend=nc │
+│ INFO 01-07 04:03:46 [parallel_state.py:1203] world_size=8 rank=3 local_rank=3 distributed_init_method=tcp://127.0.0.1:56481 backend=nc │
+│ INFO 01-07 04:03:46 [pynccl.py:111] vLLM is using nccl==2.27.5                                                                         │
+INFO 01-07 04:03:50 [parallel_state.py:1411] rank 2 in world size 8 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 2, EP ran │
+│ INFO 01-07 04:03:50 [parallel_state.py:1411] rank 0 in world size 8 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP ran │
+│ INFO 01-07 04:03:50 [parallel_state.py:1411] rank 3 in world size 8 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 3, EP ran │
+│ INFO 01-07 04:03:50 [parallel_state.py:1411] rank 6 in world size 8 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 6, EP ran │
+│ INFO 01-07 04:03:50 [parallel_state.py:1411] rank 4 in world size 8 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 4, EP ran │
+│ INFO 01-07 04:03:50 [parallel_state.py:1411] rank 1 in world size 8 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 1, EP ran │
+│ INFO 01-07 04:03:50 [parallel_state.py:1411] rank 5 in world size 8 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 5, EP ran │
+│ INFO 01-07 04:03:50 [parallel_state.py:1411] rank 7 in world size 8 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 7, EP ran │
+│ (Worker_TP0 pid=405) INFO 01-07 04:03:51 [gpu_model_runner.py:3562] Starting to load model /mnt/fsx/inference/models/gpt-oss-120b...   │
+│ (Worker_TP6 pid=411) INFO 01-07 04:04:10 [mxfp4.py:164] Using Triton backend                                                           │
+│ (Worker_TP7 pid=412) INFO 01-07 04:04:10 [mxfp4.py:164] Using Triton backend                                                           │
+│ (Worker_TP4 pid=409) INFO 01-07 04:04:10 [mxfp4.py:164] Using Triton backend                                                           │
+│ (Worker_TP1 pid=406) INFO 01-07 04:04:10 [mxfp4.py:164] Using Triton backend                                                           │
+│ (Worker_TP2 pid=407) INFO 01-07 04:04:10 [mxfp4.py:164] Using Triton backend                                                           │
+│ (Worker_TP0 pid=405) INFO 01-07 04:04:10 [cuda.py:351] Using FLASH_ATTN attention backend out of potential backends: ('FLASH_ATTN', 'T │
+│ (Worker_TP0 pid=405) INFO 01-07 04:04:10 [layer.py:372] Enabled separate cuda stream for MoE shared_experts                            │
+│ (Worker_TP0 pid=405) INFO 01-07 04:04:10 [mxfp4.py:164] Using Triton backend                                                           │
+│ (Worker_TP3 pid=408) INFO 01-07 04:04:10 [mxfp4.py:164] Using Triton backend                                                           │
+│ (Worker_TP5 pid=410) INFO 01-07 04:04:10 [mxfp4.py:164] Using Triton backend                                                           │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:   0% Completed | 0/15 [00:00<?, ?it/s]      
+ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:   7% Completed | 1/15 [00:14<03:29, 14.94s/it]                             │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  13% Completed | 2/15 [00:28<03:01, 13.93s/it]                             │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  20% Completed | 3/15 [00:42<02:48, 14.01s/it]                             │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  27% Completed | 4/15 [00:50<02:11, 11.92s/it]                             │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  33% Completed | 5/15 [01:00<01:50, 11.05s/it]                             │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  40% Completed | 6/15 [01:10<01:35, 10.64s/it]                             │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  47% Completed | 7/15 [01:21<01:27, 10.93s/it]                             │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  53% Completed | 8/15 [01:35<01:21, 11.65s/it]                             │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  60% Completed | 9/15 [01:47<01:10, 11.79s/it]                             │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  67% Completed | 10/15 [01:58<00:58, 11.65s/it]                            │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  73% Completed | 11/15 [02:10<00:46, 11.61s/it]                            │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  80% Completed | 12/15 [02:21<00:34, 11.55s/it]                            │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  87% Completed | 13/15 [02:33<00:23, 11.83s/it]                            │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards:  93% Completed | 14/15 [02:42<00:10, 10.98s/it]                            │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards: 100% Completed | 15/15 [02:53<00:00, 10.81s/it]                            │
+│ (Worker_TP0 pid=405) Loading safetensors checkpoint shards: 100% Completed | 15/15 [02:53<00:00, 11.55s/it]                            │
+│ (Worker_TP0 pid=405)                                                                                                                   │
+│ (Worker_TP0 pid=405) INFO 01-07 04:07:03 [default_loader.py:308] Loading weights took 173.36 seconds                          
+ (Worker_TP0 pid=405) INFO 01-07 04:07:04 [gpu_model_runner.py:3659] Model loading took 8.6887 GiB memory and 192.497818 seconds        │
+│ (Worker_TP0 pid=405) INFO 01-07 04:07:11 [backends.py:643] Using cache directory: /root/.cache/vllm/torch_compile_cache/3ed787581c/ran │
+│ (Worker_TP0 pid=405) INFO 01-07 04:07:11 [backends.py:703] Dynamo bytecode transform time: 6.10 s   
+ (Worker_TP7 pid=413) INFO 01-07 22:40:12 [backends.py:261] Cache the graph of compile range (1, 8192) for later use                    │
+│ (Worker_TP6 pid=412) INFO 01-07 22:40:12 [backends.py:261] Cache the graph of compile range (1, 8192) for later use                    │
+│ (Worker_TP3 pid=409) INFO 01-07 22:40:12 [backends.py:261] Cache the graph of compile range (1, 8192) for later use                    │
+│ (Worker_TP1 pid=407) INFO 01-07 22:40:12 [backends.py:261] Cache the graph of compile range (1, 8192) for later use                    │
+│ (Worker_TP4 pid=410) INFO 01-07 22:40:12 [backends.py:261] Cache the graph of compile range (1, 8192) for later use                    │
+│ (Worker_TP5 pid=411) INFO 01-07 22:40:12 [backends.py:261] Cache the graph of compile range (1, 8192) for later use                    │
+│ (Worker_TP2 pid=408) INFO 01-07 22:40:12 [backends.py:261] Cache the graph of compile range (1, 8192) for later use                    │
+│ (Worker_TP0 pid=406) INFO 01-07 22:40:12 [backends.py:261] Cache the graph of compile range (1, 8192) for later use            
+│ (Worker_TP0 pid=406) INFO 01-07 22:40:54 [monitor.py:34] torch.compile takes 51.79 s in total                                          │
+│ (Worker_TP0 pid=406) INFO 01-07 22:40:56 [gpu_worker.py:375] Available KV cache memory: 54.55 GiB                                      │
+│ (EngineCore_DP0 pid=272) INFO 01-07 22:40:57 [kv_cache_utils.py:1291] GPU KV cache size: 6,355,264 tokens                              │
+│ (EngineCore_DP0 pid=272) INFO 01-07 22:40:57 [kv_cache_utils.py:1296] Maximum concurrency for 131,072 tokens per request: 91.18x       │
+│ (Worker_TP4 pid=410) 2026-01-07 22:40:58,688 - INFO - autotuner.py:256 - flashinfer.jit: [Autotuner]: Autotuning process starts ...    │
+│ (Worker_TP5 pid=411) 2026-01-07 22:40:58,688 - INFO - autotuner.py:256 - flashinfer.jit: [Autotuner]: Autotuning process starts ...    │
+│ (Worker_TP0 pid=406) 2026-01-07 22:40:58,688 - INFO - autotuner.py:256 - flashinfer.jit: [Autotuner]: Autotuning process starts ...    │
+│ (Worker_TP1 pid=407) 2026-01-07 22:40:58,688 - INFO - autotuner.py:256 - flashinfer.jit: [Autotuner]: Autotuning process starts ...    │
+│ (Worker_TP7 pid=413) 2026-01-07 22:40:58,688 - INFO - autotuner.py:256 - flashinfer.jit: [Autotuner]: Autotuning process starts ...    │
+│ (Worker_TP6 pid=412) 2026-01-07 22:40:58,688 - INFO - autotuner.py:256 - flashinfer.jit: [Autotuner]: Autotuning process starts ...    │
+│ (Worker_TP2 pid=408) 2026-01-07 22:40:58,688 - INFO - autotuner.py:256 - flashinfer.jit: [Autotuner]: Autotuning process starts ...    │
+│ (Worker_TP3 pid=409) 2026-01-07 22:40:58,689 - INFO - autotuner.py:256 - flashinfer.jit: [Autotuner]: Autotuning process starts ...    │
+│ (Worker_TP6 pid=412) 2026-01-07 22:40:58,758 - INFO - autotuner.py:262 - flashinfer.jit: [Autotuner]: Autotuning process ends          │
+│ (Worker_TP4 pid=410) 2026-01-07 22:40:58,759 - INFO - autotuner.py:262 - flashinfer.jit: [Autotuner]: Autotuning process ends          │
+│ (Worker_TP3 pid=409) 2026-01-07 22:40:58,760 - INFO - autotuner.py:262 - flashinfer.jit: [Autotuner]: Autotuning process ends          │
+│ (Worker_TP0 pid=406) 2026-01-07 22:40:58,760 - INFO - autotuner.py:262 - flashinfer.jit: [Autotuner]: Autotuning process ends          │
+│ (Worker_TP2 pid=408) 2026-01-07 22:40:58,760 - INFO - autotuner.py:262 - flashinfer.jit: [Autotuner]: Autotuning process ends          │
+│ (Worker_TP1 pid=407) 2026-01-07 22:40:58,762 - INFO - autotuner.py:262 - flashinfer.jit: [Autotuner]: Autotuning process ends          │
+│ (Worker_TP5 pid=411) 2026-01-07 22:40:58,762 - INFO - autotuner.py:262 - flashinfer.jit: [Autotuner]: Autotuning process ends          │
+│ (Worker_TP7 pid=413) 2026-01-07 22:40:58,764 - INFO - autotuner.py:262 - flashinfer.jit: [Autotuner]: Autotuning process ends   
+│ (EngineCore_DP0 pid=272) INFO 01-07 22:41:58 [shm_broadcast.py:542] No available shared memory broadcast block found in 60 seconds. Th │
+│ (Worker_TP0 pid=406) Capturing CUDA graphs (mixed prefill-decode, PIECEWISE):   0%|          | 0/83 [00:00<?, ?it/s]Capturing CUDA gra │
+ (Worker_TP7 pid=413) INFO 01-07 22:42:17 [custom_all_reduce.py:216] Registering 1168 cuda graph addresses                              │
+│ (Worker_TP3 pid=409) INFO 01-07 22:42:17 [custom_all_reduce.py:216] Registering 1168 cuda graph addresses                              │
+│ (Worker_TP4 pid=410) INFO 01-07 22:42:17 [custom_all_reduce.py:216] Registering 1168 cuda graph addresses                              │
+│ (Worker_TP0 pid=406) Capturing CUDA graphs (decode, FULL):   0%|          | 0/83 [00:00<?, ?it/s]Capturing CUDA graphs (decode, FULL): │
+│ (Worker_TP2 pid=408) INFO 01-07 22:42:17 [custom_all_reduce.py:216] Registering 1168 cuda graph addresses                              │
+│ (Worker_TP1 pid=407) INFO 01-07 22:42:17 [custom_all_reduce.py:216] Registering 1168 cuda graph addresses                              │
+│ (Worker_TP0 pid=406) INFO 01-07 22:42:17 [custom_all_reduce.py:216] Registering 1168 cuda graph addresses                              │
+│ (Worker_TP6 pid=412) INFO 01-07 22:42:17 [custom_all_reduce.py:216] Registering 1168 cuda graph addresses                              │
+│ (Worker_TP5 pid=411) INFO 01-07 22:42:17 [custom_all_reduce.py:216] Registering 1168 cuda graph addresses                              │
+│ (Worker_TP0 pid=406) INFO 01-07 22:42:18 [gpu_model_runner.py:4587] Graph capturing finished in 80 secs, took 1.67 GiB                 │
+│ (EngineCore_DP0 pid=272) INFO 01-07 22:42:19 [core.py:259] init engine (profile, create kv cache, warmup model) took 139.70 seconds    │
+│ (APIServer pid=1) INFO 01-07 22:42:22 [api_server.py:1099] Supported tasks: ['generate']                                               │
+│ (APIServer pid=1) WARNING 01-07 22:42:22 [serving_responses.py:222] For gpt-oss, we ignore --enable-auto-tool-choice and always enable │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [api_server.py:1425] Starting vLLM API server 0 on http://0.0.0.0:8000                           │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:38] Available routes are:                   
+(APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /openapi.json, Methods: HEAD, GET                                        │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /docs, Methods: HEAD, GET                                                │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /docs/oauth2-redirect, Methods: HEAD, GET                                │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /redoc, Methods: HEAD, GET                                               │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /scale_elastic_ep, Methods: POST                                         │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /is_scaling_elastic_ep, Methods: POST                                    │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /tokenize, Methods: POST                                                 │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /detokenize, Methods: POST                                               │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /inference/v1/generate, Methods: POST                                    │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /pause, Methods: POST                                                    │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /resume, Methods: POST                                                   │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /is_paused, Methods: GET        
+ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /metrics, Methods: GET                                                   │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /health, Methods: GET                                                    │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /load, Methods: GET                                                      │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/models, Methods: GET                                                 │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /version, Methods: GET                                                   │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/responses, Methods: POST                                             │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/responses/{response_id}, Methods: GET                                │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/responses/{response_id}/cancel, Methods: POST                        │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/messages, Methods: POST                                              │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/chat/completions, Methods: POST                                      │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/completions, Methods: POST                                           │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/audio/transcriptions, Methods: POST                                  │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/audio/translations, Methods: POST                                    │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /ping, Methods: GET                                                      │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /ping, Methods: POST                                                     │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /invocations, Methods: POST                                              │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /classify, Methods: POST                                                 │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/embeddings, Methods: POST                                            │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /score, Methods: POST                                                    │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/score, Methods: POST                                                 │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /rerank, Methods: POST                            
+ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v1/rerank, Methods: POST                                                │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /v2/rerank, Methods: POST                                                │
+│ (APIServer pid=1) INFO 01-07 22:42:24 [launcher.py:46] Route: /pooling, Methods: POST                                                  │
+│ (APIServer pid=1) INFO:     Started server process [1]                                                                                 │
+│ (APIServer pid=1) INFO:     Waiting for application startup.                                                                           │
+│ (APIServer pid=1) INFO:     Application startup complete.                                     

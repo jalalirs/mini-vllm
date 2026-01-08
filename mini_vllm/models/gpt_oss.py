@@ -48,6 +48,7 @@ class GptOssConfig:
         rope_scaling: Optional[dict] = None,
         sliding_window: Optional[int] = 4096,
         tie_word_embeddings: bool = False,
+        quantization_config: Optional[dict] = None,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -63,6 +64,13 @@ class GptOssConfig:
         self.rope_theta = rope_theta
         self.sliding_window = sliding_window
         self.tie_word_embeddings = tie_word_embeddings
+        
+        # MXFP4 quantization config
+        self.quantization_config = quantization_config
+        self.use_mxfp4 = (
+            quantization_config is not None and 
+            quantization_config.get("quant_method") == "mxfp4"
+        )
         
         # Handle rope_parameters from config (may come as kwarg)
         rope_params = kwargs.get("rope_parameters", rope_scaling)
@@ -171,29 +179,32 @@ class OAIAttention(nn.Module):
 
 
 class MLPBlock(nn.Module):
-    """GPT-OSS MoE block with FusedMoE."""
+    """GPT-OSS MoE block with FusedMoE and MXFP4 support."""
     
     def __init__(
         self,
         config: GptOssConfig,
         layer_idx: int,
+        use_mxfp4: bool = True,
     ):
         super().__init__()
         self.layer_idx = layer_idx
         self.hidden_size = config.hidden_size
         self.num_experts = config.num_local_experts
         self.top_k = config.num_experts_per_tok
+        self.use_mxfp4 = use_mxfp4
         
         # Router
         self.router = nn.Linear(config.hidden_size, config.num_local_experts, bias=True)
         
-        # Fused MoE experts
+        # Fused MoE experts with MXFP4 quantization
         self.experts = FusedMoE(
             num_experts=config.num_local_experts,
             top_k=config.num_experts_per_tok,
             hidden_size=config.hidden_size,
             intermediate_size=config.intermediate_size,
             activation="swiglu",
+            use_mxfp4=use_mxfp4,
         )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -218,8 +229,8 @@ class TransformerBlock(nn.Module):
         # Attention
         self.attn = OAIAttention(config, layer_idx)
         
-        # MoE MLP
-        self.mlp = MLPBlock(config, layer_idx)
+        # MoE MLP with MXFP4 support
+        self.mlp = MLPBlock(config, layer_idx, use_mxfp4=config.use_mxfp4)
         
         # Layer norms
         self.input_layernorm = RMSNorm(config.hidden_size, eps=1e-5)

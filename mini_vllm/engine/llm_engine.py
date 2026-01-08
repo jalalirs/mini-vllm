@@ -195,7 +195,7 @@ class LLMEngine:
         tp_rank: int,
         tp_size: int,
     ):
-        """Load model weights with tensor parallel sharding."""
+        """Load model weights with MXFP4 and tensor parallel support."""
         import os
         import glob
         from safetensors import safe_open
@@ -206,29 +206,117 @@ class LLMEngine:
         if not safetensors_files:
             raise FileNotFoundError(f"No safetensors files found in {model_path}")
         
+        config = model.config
+        use_mxfp4 = getattr(config, 'use_mxfp4', False)
+        
+        print(f"[Rank {tp_rank}] Loading weights, MXFP4={use_mxfp4}")
+        
+        # MXFP4 parameters
+        mxfp4_block = 32
+        num_experts = config.num_local_experts
+        intermediate_size = config.intermediate_size
+        hidden_size = config.hidden_size
+        
+        # Calculate TP slicing for MXFP4
+        intermediate_size_block = intermediate_size // mxfp4_block
+        per_rank_intermediate_size_block = (intermediate_size_block + tp_size - 1) // tp_size
+        per_rank_intermediate_size = per_rank_intermediate_size_block * mxfp4_block
+        tp_rank_start = tp_rank * per_rank_intermediate_size
+        tp_rank_end = min((tp_rank + 1) * per_rank_intermediate_size, intermediate_size)
+        
         # Patterns for column-parallel (shard dim 0)
         column_parallel = ["q_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "embed_tokens", "lm_head"]
         # Patterns for row-parallel (shard dim 1)
         row_parallel = ["o_proj", "down_proj"]
         
+        # MXFP4 weight patterns (do NOT convert dtype)
+        mxfp4_patterns = [".w13_weight", ".w2_weight", ".w13_weight_scale", ".w2_weight_scale"]
+        
         state_dict = {}
+        loaded_count = 0
         
         for file_path in safetensors_files:
             with safe_open(file_path, framework="pt", device="cpu") as f:
                 for name in f.keys():
                     tensor = f.get_tensor(name)
                     
-                    # Apply sharding if needed
-                    if tp_size > 1:
-                        tensor = LLMEngine._shard_weight(
-                            tensor, name, tp_rank, tp_size, column_parallel, row_parallel
-                        )
+                    # Check if this is an MXFP4 weight
+                    is_mxfp4 = use_mxfp4 and any(p in name for p in mxfp4_patterns)
                     
-                    # Convert dtype and store
-                    state_dict[name] = tensor.to(dtype)
+                    if is_mxfp4:
+                        # Handle MXFP4 weights - shard but don't convert dtype
+                        tensor = LLMEngine._shard_mxfp4_weight(
+                            tensor=tensor,
+                            name=name,
+                            tp_rank=tp_rank,
+                            tp_size=tp_size,
+                            tp_rank_start=tp_rank_start,
+                            tp_rank_end=tp_rank_end,
+                            num_experts=num_experts,
+                            intermediate_size=intermediate_size,
+                            mxfp4_block=mxfp4_block,
+                        )
+                        state_dict[name] = tensor  # Keep original dtype (uint8)
+                    else:
+                        # Handle regular weights
+                        if tp_size > 1:
+                            tensor = LLMEngine._shard_weight(
+                                tensor, name, tp_rank, tp_size, column_parallel, row_parallel
+                            )
+                        state_dict[name] = tensor.to(dtype)
+                    
+                    loaded_count += 1
+        
+        print(f"[Rank {tp_rank}] Loaded {loaded_count} weight tensors")
         
         # Load into model
-        model.load_state_dict(state_dict, strict=False)
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        if missing:
+            print(f"[Rank {tp_rank}] Missing keys: {len(missing)}")
+        if unexpected:
+            print(f"[Rank {tp_rank}] Unexpected keys: {len(unexpected)}")
+    
+    @staticmethod
+    def _shard_mxfp4_weight(
+        tensor: torch.Tensor,
+        name: str,
+        tp_rank: int,
+        tp_size: int,
+        tp_rank_start: int,
+        tp_rank_end: int,
+        num_experts: int,
+        intermediate_size: int,
+        mxfp4_block: int,
+    ) -> torch.Tensor:
+        """Shard MXFP4 weight for tensor parallelism."""
+        if tp_size == 1:
+            return tensor
+        
+        if ".w13_weight_scale" in name:
+            # [E, 2*N, K/block] -> shard on dim 1
+            narrow = tensor[:, 2 * tp_rank_start : 2 * tp_rank_end, ...]
+            return narrow.contiguous()
+            
+        elif ".w2_weight_scale" in name:
+            # [E, K, N/block] -> shard on dim 2
+            tp_start_block = tp_rank_start // mxfp4_block
+            tp_end_block = tp_rank_end // mxfp4_block
+            narrow = tensor[..., tp_start_block : tp_end_block]
+            return narrow.contiguous()
+            
+        elif ".w13_weight" in name:
+            # [E, 2*N, block_size, entries] -> flatten and shard
+            tensor = tensor.view(num_experts, 2 * intermediate_size, -1).contiguous()
+            narrow = tensor[:, 2 * tp_rank_start : 2 * tp_rank_end, ...]
+            return narrow.contiguous()
+            
+        elif ".w2_weight" in name:
+            # [E, K, N/2] -> shard on last dim
+            tensor = tensor.view(num_experts, -1, intermediate_size // 2).contiguous()
+            narrow = tensor[..., tp_rank_start // 2 : tp_rank_end // 2]
+            return narrow.contiguous()
+        
+        return tensor
     
     @staticmethod
     def _shard_weight(
