@@ -153,6 +153,12 @@ class LLMEngine:
         model = model.to(device).to(torch_dtype)
         model.eval()
         
+        # Process MXFP4 weights after loading (dequantize once)
+        if config.use_mxfp4:
+            print(f"[Rank {rank}] Processing MXFP4 weights...")
+            cls._process_mxfp4_weights(model)
+            print(f"[Rank {rank}] MXFP4 weights processed")
+        
         # Create KV cache manager
         kv_cache_manager = KVCacheManager(
             num_layers=config.num_hidden_layers,
@@ -173,6 +179,15 @@ class LLMEngine:
             kv_cache_manager=kv_cache_manager,
             tensor_parallel_size=tensor_parallel_size,
         )
+    
+    @staticmethod
+    def _process_mxfp4_weights(model: GptOssForCausalLM):
+        """Process MXFP4 weights after loading - dequantize once."""
+        from mini_vllm.layers.fused_moe import FusedMoE
+        
+        for name, module in model.named_modules():
+            if isinstance(module, FusedMoE):
+                module.process_weights_after_loading()
     
     @staticmethod
     def _load_config(model_path: str) -> GptOssConfig:

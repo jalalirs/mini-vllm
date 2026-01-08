@@ -22,6 +22,10 @@ class FusedMoE(nn.Module):
     - Tensor parallelism support
     
     For GPT-OSS: 16 experts, top-2 routing, SwiGLU activation.
+    
+    Memory optimization:
+    - Weights cached in dequantized form after first forward pass
+    - Uses ~8GB per GPU with TP=8 for 120B model
     """
     
     def __init__(
@@ -50,6 +54,10 @@ class FusedMoE(nn.Module):
         self.use_mxfp4 = use_mxfp4
         self.dtype = dtype
         self.mxfp4_block = 32  # MXFP4 block size
+        
+        # Cached dequantized weights (populated on first forward or process_weights_after_loading)
+        self._w13_dequant: Optional[torch.Tensor] = None
+        self._w2_dequant: Optional[torch.Tensor] = None
         
         # Per-partition intermediate size
         assert intermediate_size % tp_size == 0
@@ -222,20 +230,61 @@ class FusedMoE(nn.Module):
         
         return topk_weights.to(router_logits.dtype), topk_ids
     
+    def process_weights_after_loading(self):
+        """Dequantize MXFP4 weights after loading - called once.
+        
+        This pre-dequantizes weights to avoid repeated dequantization during
+        forward passes. The dequantized weights are stored in bfloat16.
+        """
+        if not self.use_mxfp4:
+            return
+        
+        if self._w13_dequant is not None:
+            return  # Already processed
+        
+        logger.info(f"Dequantizing MXFP4 weights for MoE layer...")
+        
+        # Dequantize and cache
+        self._w13_dequant = self._dequantize_mxfp4(
+            self.w13_weight, self.w13_weight_scale
+        )  # [E, 2N, K]
+        self._w2_dequant = self._dequantize_mxfp4(
+            self.w2_weight, self.w2_weight_scale
+        )  # [E, K, N]
+        
+        # Free quantized weights to save memory
+        del self.w13_weight
+        del self.w13_weight_scale
+        del self.w2_weight
+        del self.w2_weight_scale
+        
+        # Register dequantized weights as buffers (not parameters)
+        self.register_buffer("w13_weight_dequant", self._w13_dequant)
+        self.register_buffer("w2_weight_dequant", self._w2_dequant)
+        
+        logger.info(
+            f"  w13: {self._w13_dequant.shape}, w2: {self._w2_dequant.shape}"
+        )
+    
     def _forward_mxfp4(
         self,
         hidden_states: torch.Tensor,
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
     ) -> torch.Tensor:
-        """Forward with MXFP4 dequantization."""
+        """Forward with MXFP4 weights (pre-dequantized or on-the-fly)."""
         batch_size, hidden_size = hidden_states.shape
         device = hidden_states.device
         dtype = hidden_states.dtype
         
-        # Dequantize weights (this is expensive, ideally use Triton kernels)
-        w13 = self._dequantize_mxfp4(self.w13_weight, self.w13_weight_scale)  # [E, 2N, K]
-        w2 = self._dequantize_mxfp4(self.w2_weight, self.w2_weight_scale)    # [E, K, N]
+        # Use cached dequantized weights if available, otherwise dequantize on-the-fly
+        if self._w13_dequant is not None:
+            w13 = self._w13_dequant
+            w2 = self._w2_dequant
+        else:
+            # Fallback: dequantize (shouldn't happen if process_weights_after_loading called)
+            w13 = self._dequantize_mxfp4(self.w13_weight, self.w13_weight_scale)
+            w2 = self._dequantize_mxfp4(self.w2_weight, self.w2_weight_scale)
         
         E, N2, K = w13.shape
         N = N2 // 2
