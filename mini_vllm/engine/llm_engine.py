@@ -207,7 +207,7 @@ class LLMEngine:
             raise FileNotFoundError(f"No safetensors files found in {model_path}")
         
         # Patterns for column-parallel (shard dim 0)
-        column_parallel = ["q_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "embed_tokens"]
+        column_parallel = ["q_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "embed_tokens", "lm_head"]
         # Patterns for row-parallel (shard dim 1)
         row_parallel = ["o_proj", "down_proj"]
         
