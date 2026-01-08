@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Fused MoE layer for GPT-OSS with MXFP4 support."""
+"""Fused MoE layer for GPT-OSS with MXFP4 Triton backend."""
 
 import torch
 import torch.nn as nn
@@ -15,17 +15,12 @@ logger = logging.getLogger(__name__)
 class FusedMoE(nn.Module):
     """Fused Mixture of Experts layer with MXFP4 quantization.
     
-    Implements efficient MoE with:
-    - MXFP4 quantized weights (4-bit with FP8 scales)
-    - Fused gate+up projection (SwiGLU)
-    - Top-k expert routing
-    - Tensor parallelism support
+    Uses Triton backend for MXFP4 MoE on H100:
+    - Weights stored as uint8 packed FP4
+    - Scales stored as uint8 FP8
+    - Triton matmul_ogs kernel for fused GEMM
     
     For GPT-OSS: 16 experts, top-2 routing, SwiGLU activation.
-    
-    Memory optimization:
-    - Weights cached in dequantized form after first forward pass
-    - Uses ~8GB per GPU with TP=8 for 120B model
     """
     
     def __init__(
@@ -34,10 +29,8 @@ class FusedMoE(nn.Module):
         top_k: int,
         hidden_size: int,
         intermediate_size: int,
-        activation: str = "swiglu",
         reduce_results: bool = True,
         renormalize: bool = True,
-        has_bias: bool = True,
         use_mxfp4: bool = True,
         dtype: torch.dtype = torch.bfloat16,
     ):
@@ -53,293 +46,114 @@ class FusedMoE(nn.Module):
         self.renormalize = renormalize
         self.use_mxfp4 = use_mxfp4
         self.dtype = dtype
-        self.mxfp4_block = 32  # MXFP4 block size
+        self.mxfp4_block = 32
         
-        # Cached dequantized weights (populated on first forward or process_weights_after_loading)
-        self._w13_dequant: Optional[torch.Tensor] = None
-        self._w2_dequant: Optional[torch.Tensor] = None
+        # Pad intermediate size per partition
+        intermediate_size_per_partition = intermediate_size // tp_size
+        self.intermediate_size_padded = (
+            (intermediate_size_per_partition + 63) // 64 * 64
+        )
         
-        # Per-partition intermediate size
-        assert intermediate_size % tp_size == 0
-        self.intermediate_size_per_partition = intermediate_size // tp_size
-        N = self.intermediate_size_per_partition
-        K = hidden_size
-        E = num_experts
+        # MXFP4 method (handles weight creation and swizzling)
+        self.mxfp4_method: Optional["Mxfp4MoEMethod"] = None
         
         if use_mxfp4:
-            # MXFP4 quantized weights
-            # w13: [E, 2*N, K/2] uint8 (packed FP4, 2 values per byte)
-            self.w13_weight = nn.Parameter(
-                torch.zeros(E, 2 * N, K // 2, dtype=torch.uint8),
-                requires_grad=False,
+            from mini_vllm.layers.quantization.mxfp4 import Mxfp4MoEMethod
+            self.mxfp4_method = Mxfp4MoEMethod(
+                num_experts=num_experts,
+                hidden_size=hidden_size,
+                intermediate_size=self.intermediate_size_padded * tp_size,
             )
-            
-            # w13 scales: [E, 2*N, K/block] uint8 (FP8 E4M3)
-            self.w13_weight_scale = nn.Parameter(
-                torch.zeros(E, 2 * N, K // self.mxfp4_block, dtype=torch.uint8),
-                requires_grad=False,
-            )
-            
-            # w2: [E, K, N/2] uint8 (packed FP4)
-            self.w2_weight = nn.Parameter(
-                torch.zeros(E, K, N // 2, dtype=torch.uint8),
-                requires_grad=False,
-            )
-            
-            # w2 scales: [E, K, N/block] uint8 (FP8 E4M3)
-            self.w2_weight_scale = nn.Parameter(
-                torch.zeros(E, K, N // self.mxfp4_block, dtype=torch.uint8),
-                requires_grad=False,
-            )
-            
-            logger.debug(
-                f"Created MXFP4 MoE: E={E}, N={N}, K={K}, "
-                f"w13=[{E}, {2*N}, {K//2}], w2=[{E}, {K}, {N//2}]"
-            )
+            self.mxfp4_method.create_weights(self)
         else:
-            # Full precision weights
+            # Non-quantized weights (bfloat16)
+            E = num_experts
+            N = self.intermediate_size_padded
+            K = hidden_size
+            
             self.w13_weight = nn.Parameter(
-                torch.empty(E, 2 * N, K, dtype=dtype)
+                torch.empty(E, 2 * N, K, dtype=dtype), requires_grad=False
             )
             self.w2_weight = nn.Parameter(
-                torch.empty(E, K, N, dtype=dtype)
+                torch.empty(E, K, N, dtype=dtype), requires_grad=False
             )
-            self.register_parameter("w13_weight_scale", None)
-            self.register_parameter("w2_weight_scale", None)
-        
-        # Biases (always full precision)
-        if has_bias:
             self.w13_bias = nn.Parameter(
-                torch.zeros(E, 2 * N, dtype=torch.float32 if use_mxfp4 else dtype)
+                torch.zeros(E, 2 * N, dtype=dtype), requires_grad=False
             )
             self.w2_bias = nn.Parameter(
-                torch.zeros(E, K, dtype=torch.float32 if use_mxfp4 else dtype)
+                torch.zeros(E, K, dtype=dtype), requires_grad=False
             )
-        else:
-            self.register_parameter("w13_bias", None)
-            self.register_parameter("w2_bias", None)
     
-    def _dequantize_mxfp4(
-        self,
-        weight: torch.Tensor,
-        scale: torch.Tensor,
-    ) -> torch.Tensor:
-        """Dequantize MXFP4 weights.
-        
-        Args:
-            weight: [E, M, N/2] uint8 packed weights
-            scale: [E, M, N/block] uint8 FP8 scales
-            
-        Returns:
-            [E, M, N] dequantized weights in bfloat16
-        """
-        E, M, N_half = weight.shape
-        N = N_half * 2
-        block = self.mxfp4_block
-        device = weight.device
-        
-        # Unpack FP4 from uint8 (2 values per byte)
-        low = (weight & 0x0F).to(torch.int8)
-        high = ((weight >> 4) & 0x0F).to(torch.int8)
-        
-        # Interleave to get original order
-        unpacked = torch.stack([low, high], dim=-1).reshape(E, M, N)
-        
-        # FP4 E2M1 format: sign(1) + exp(2) + mantissa(1)
-        # Values: 0, ±0.5, ±1, ±1.5, ±2, ±3, ±4, ±6
-        # Use lookup table for efficiency
-        fp4_table = torch.tensor([
-            0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
-            -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0
-        ], dtype=torch.float32, device=device)
-        
-        # Convert to float using table
-        dequant = fp4_table[unpacked.long()]
-        
-        # Convert FP8 E4M3 scales to float
-        # FP8 E4M3: sign(1) + exp(4) + mantissa(3)
-        scale_sign = ((scale >> 7) & 1).float() * -2.0 + 1.0
-        scale_exp = ((scale >> 3) & 0xF).int()
-        scale_mant = (scale & 0x7).float() / 8.0
-        
-        # 2^(exp-7) * (1 + mant), with subnormal handling
-        scale_float = torch.where(
-            scale_exp == 0,
-            scale_mant / 64.0,
-            torch.pow(2.0, scale_exp.float() - 7.0) * (1.0 + scale_mant)
-        ) * scale_sign
-        
-        # Expand scales to match weight dimensions
-        scale_expanded = scale_float.repeat_interleave(block, dim=-1)
-        if scale_expanded.shape[-1] > N:
-            scale_expanded = scale_expanded[..., :N]
-        elif scale_expanded.shape[-1] < N:
-            # Pad if needed
-            pad_size = N - scale_expanded.shape[-1]
-            scale_expanded = F.pad(scale_expanded, (0, pad_size), value=1.0)
-        
-        # Apply scales
-        result = dequant * scale_expanded
-        
-        return result.to(torch.bfloat16)
+    def process_weights_after_loading(self):
+        """Process weights after loading - swizzle for Triton."""
+        if self.use_mxfp4 and self.mxfp4_method is not None:
+            self.mxfp4_method.process_weights_after_loading(self)
     
     def forward(
         self,
         hidden_states: torch.Tensor,
         router_logits: torch.Tensor,
     ) -> torch.Tensor:
-        """Forward pass with MXFP4 dequantization.
+        """
+        Forward pass with MXFP4 Triton backend.
         
         Args:
-            hidden_states: [num_tokens, hidden_size]
-            router_logits: [num_tokens, num_experts]
+            hidden_states: [num_tokens, hidden_size] bfloat16
+            router_logits: [num_tokens, num_experts] router scores
             
         Returns:
             Output tensor [num_tokens, hidden_size]
         """
-        # Get routing weights and expert assignments
-        topk_weights, topk_ids = self._select_experts(router_logits)
-        
         if self.use_mxfp4:
-            return self._forward_mxfp4(hidden_states, topk_weights, topk_ids)
+            return self._forward_triton_mxfp4(hidden_states, router_logits)
         else:
-            return self._forward_fp16(hidden_states, topk_weights, topk_ids)
+            return self._forward_fp16(hidden_states, router_logits)
     
-    def _select_experts(
-        self,
-        router_logits: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Select top-k experts based on router logits.
-        
-        Args:
-            router_logits: [num_tokens, num_experts]
-            
-        Returns:
-            topk_weights: [num_tokens, top_k]
-            topk_ids: [num_tokens, top_k]
-        """
-        # Softmax over experts
-        routing_weights = F.softmax(router_logits, dim=-1, dtype=torch.float32)
-        
-        # Select top-k
-        topk_weights, topk_ids = torch.topk(routing_weights, self.top_k, dim=-1)
-        
-        # Renormalize if needed
-        if self.renormalize:
-            topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
-        
-        return topk_weights.to(router_logits.dtype), topk_ids
-    
-    def process_weights_after_loading(self):
-        """Dequantize MXFP4 weights after loading - called once.
-        
-        This pre-dequantizes weights to avoid repeated dequantization during
-        forward passes. The dequantized weights are stored in bfloat16.
-        """
-        if not self.use_mxfp4:
-            return
-        
-        if self._w13_dequant is not None:
-            return  # Already processed
-        
-        logger.info(f"Dequantizing MXFP4 weights for MoE layer...")
-        
-        # Dequantize and cache
-        self._w13_dequant = self._dequantize_mxfp4(
-            self.w13_weight, self.w13_weight_scale
-        )  # [E, 2N, K]
-        self._w2_dequant = self._dequantize_mxfp4(
-            self.w2_weight, self.w2_weight_scale
-        )  # [E, K, N]
-        
-        # Free quantized weights to save memory
-        del self.w13_weight
-        del self.w13_weight_scale
-        del self.w2_weight
-        del self.w2_weight_scale
-        
-        # Register dequantized weights as buffers (not parameters)
-        self.register_buffer("w13_weight_dequant", self._w13_dequant)
-        self.register_buffer("w2_weight_dequant", self._w2_dequant)
-        
-        logger.info(
-            f"  w13: {self._w13_dequant.shape}, w2: {self._w2_dequant.shape}"
-        )
-    
-    def _forward_mxfp4(
+    def _forward_triton_mxfp4(
         self,
         hidden_states: torch.Tensor,
-        topk_weights: torch.Tensor,
-        topk_ids: torch.Tensor,
+        router_logits: torch.Tensor,
     ) -> torch.Tensor:
-        """Forward with MXFP4 weights (pre-dequantized or on-the-fly)."""
-        batch_size, hidden_size = hidden_states.shape
-        device = hidden_states.device
-        dtype = hidden_states.dtype
+        """Forward with Triton MXFP4 backend (matches vLLM logs)."""
+        from mini_vllm.layers.fused_moe.triton_moe import triton_kernel_moe_forward
         
-        # Use cached dequantized weights if available, otherwise dequantize on-the-fly
-        if self._w13_dequant is not None:
-            w13 = self._w13_dequant
-            w2 = self._w2_dequant
-        else:
-            # Fallback: dequantize (shouldn't happen if process_weights_after_loading called)
-            w13 = self._dequantize_mxfp4(self.w13_weight, self.w13_weight_scale)
-            w2 = self._dequantize_mxfp4(self.w2_weight, self.w2_weight_scale)
+        # Get quantization config
+        quant_config = self.mxfp4_method.get_quant_config(self)
         
-        E, N2, K = w13.shape
-        N = N2 // 2
-        
-        # Get biases
-        w13_bias = self.w13_bias.to(dtype) if self.w13_bias is not None else None
-        w2_bias = self.w2_bias.to(dtype) if self.w2_bias is not None else None
-        
-        # Process with grouped operations for efficiency
-        output = torch.zeros(batch_size, hidden_size, device=device, dtype=dtype)
-        
-        for k in range(self.top_k):
-            expert_ids = topk_ids[:, k]
-            weights = topk_weights[:, k:k+1]
-            
-            for e in range(E):
-                mask = (expert_ids == e)
-                if not mask.any():
-                    continue
-                
-                x_e = hidden_states[mask]
-                
-                # Gate-up projection: x @ w13^T
-                w13_e = w13[e]  # [2N, K]
-                h = F.linear(x_e, w13_e)  # [tokens, 2N]
-                if w13_bias is not None:
-                    h = h + w13_bias[e]
-                
-                # SwiGLU: silu(gate) * up
-                gate, up = h.chunk(2, dim=-1)
-                h = F.silu(gate) * up
-                
-                # Down projection: h @ w2^T
-                w2_e = w2[e]  # [K, N]
-                out = F.linear(h, w2_e)  # [tokens, K]
-                if w2_bias is not None:
-                    out = out + w2_bias[e]
-                
-                output[mask] += weights[mask] * out
-        
-        return output
+        return triton_kernel_moe_forward(
+            hidden_states=hidden_states,
+            w1=self.w13_weight,
+            w2=self.w2_weight,
+            gating_output=router_logits,
+            topk=self.top_k,
+            renormalize=self.renormalize,
+            quant_config=quant_config,
+            global_num_experts=self.num_experts,
+            expert_map=None,
+        )
     
     def _forward_fp16(
         self,
         hidden_states: torch.Tensor,
-        topk_weights: torch.Tensor,
-        topk_ids: torch.Tensor,
+        router_logits: torch.Tensor,
     ) -> torch.Tensor:
-        """Forward with full precision weights."""
+        """Fallback FP16 forward (non-quantized)."""
         batch_size, hidden_size = hidden_states.shape
         device = hidden_states.device
         dtype = hidden_states.dtype
         
-        E = self.num_experts
+        # Softmax routing
+        routing_weights = F.softmax(router_logits, dim=-1, dtype=torch.float32)
+        topk_weights, topk_ids = torch.topk(routing_weights, self.top_k, dim=-1)
+        
+        if self.renormalize:
+            topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
+        topk_weights = topk_weights.to(dtype)
+        
+        # Process experts
         output = torch.zeros(batch_size, hidden_size, device=device, dtype=dtype)
+        E = self.num_experts
+        N = self.intermediate_size_padded
         
         for k in range(self.top_k):
             expert_ids = topk_ids[:, k]
@@ -352,9 +166,8 @@ class FusedMoE(nn.Module):
                 
                 x_e = hidden_states[mask]
                 
-                # Gate-up projection
-                w13_e = self.w13_weight[e]
-                h = F.linear(x_e, w13_e)
+                # Gate+up projection
+                h = F.linear(x_e, self.w13_weight[e])
                 if self.w13_bias is not None:
                     h = h + self.w13_bias[e]
                 
@@ -363,8 +176,7 @@ class FusedMoE(nn.Module):
                 h = F.silu(gate) * up
                 
                 # Down projection
-                w2_e = self.w2_weight[e]
-                out = F.linear(h, w2_e)
+                out = F.linear(h, self.w2_weight[e])
                 if self.w2_bias is not None:
                     out = out + self.w2_bias[e]
                 

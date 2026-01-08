@@ -1,69 +1,113 @@
 # SPDX-License-Identifier: Apache-2.0
-# Mini-vLLM MXFP4 Quantization for GPT-OSS
-"""
-MXFP4 (Microscaling FP4) quantization support.
-This provides 4-bit weight quantization with FP8 scales.
-"""
-from typing import Optional
+# Adapted from vLLM for mini-vllm GPT-OSS MXFP4 support
+"""MXFP4 quantization support for GPT-OSS on H100."""
+
+import logging
+from typing import Optional, Any
+
 import torch
 from torch.nn.parameter import Parameter
 
-import logging
-
 logger = logging.getLogger(__name__)
 
+# Import triton_kernels for weight swizzling
+try:
+    import mini_vllm.third_party.triton_kernels.matmul_ogs_details.opt_flags as opt_flags
+    from mini_vllm.third_party.triton_kernels.numerics import InFlexData
+    from mini_vllm.third_party.triton_kernels.tensor import FP4, convert_layout, wrap_torch_tensor
+    from mini_vllm.third_party.triton_kernels.tensor_details import layout
+    from mini_vllm.third_party.triton_kernels.tensor_details.layout import StridedLayout
+    from mini_vllm.third_party.triton_kernels.matmul_ogs import PrecisionConfig, FlexCtx
+    TRITON_KERNELS_AVAILABLE = True
+except ImportError as e:
+    TRITON_KERNELS_AVAILABLE = False
+    logger.warning(f"triton_kernels not available: {e}")
 
-class Mxfp4Config:
-    """Configuration for MXFP4 quantization."""
+
+def swizzle_mxfp4_weights(
+    quant_tensor: torch.Tensor,
+    scale: torch.Tensor,
+    num_warps: int = 8,
+) -> tuple[torch.Tensor, Any, torch.Tensor]:
+    """
+    Swizzle MXFP4 weights for optimal Triton kernel performance.
     
-    def __init__(self):
-        self.quant_method = "mxfp4"
-        self.block_size = 32  # MXFP4 uses 32-element blocks
+    Args:
+        quant_tensor: [E, N, K/2] uint8 packed FP4 weights
+        scale: [E, N, K/32] uint8 FP8 scales
+        num_warps: Number of warps for kernel tuning
     
-    @classmethod
-    def from_config(cls, config: dict) -> "Mxfp4Config":
-        """Create from model config."""
-        return cls()
+    Returns:
+        Tuple of (swizzled_weight, flex_ctx, swizzled_scale)
+    """
+    if not TRITON_KERNELS_AVAILABLE:
+        raise RuntimeError("triton_kernels required for MXFP4 weight swizzling")
     
-    @classmethod
-    def get_name(cls) -> str:
-        return "mxfp4"
+    # For H100 (SM90), use default matmul layouts
+    value_layout, value_layout_opts = layout.make_default_matmul_mxfp4_w_layout(
+        mx_axis=1
+    )
+    scale_layout, scale_layout_opts = layout.make_default_matmul_mxfp4_w_scale_layout(
+        mx_axis=1, num_warps=num_warps
+    )
+    
+    # Set SM90 constraints
+    constraints = {"split_k": 1}
+    opt_flags.update_opt_flags_constraints(constraints)
+    
+    # Transpose for quantization axis on dim1
+    quant_tensor = quant_tensor.transpose(-2, -1)
+    scale = scale.transpose(-2, -1)
+    
+    # Convert layout for optimized memory access
+    quant_tensor = convert_layout(
+        wrap_torch_tensor(quant_tensor, dtype=FP4), value_layout, **value_layout_opts
+    )
+    scale = convert_layout(wrap_torch_tensor(scale), scale_layout, **scale_layout_opts)
+    
+    return quant_tensor, InFlexData(), scale
 
 
 class Mxfp4MoEMethod:
-    """MXFP4 quantization method for MoE layers."""
+    """MXFP4 MoE method using Triton backend for H100."""
     
-    def __init__(self, num_experts: int, intermediate_size: int, hidden_size: int):
-        self.num_experts = num_experts
-        self.intermediate_size = intermediate_size
-        self.hidden_size = hidden_size
-        self.block_size = 32  # MXFP4 block size
-        
-        # Pad intermediate size to multiple of block size
-        self.intermediate_size_padded = (
-            (intermediate_size + self.block_size - 1) // self.block_size * self.block_size
-        )
-    
-    def create_weights(
+    def __init__(
         self,
-        layer: torch.nn.Module,
-        tp_size: int = 1,
+        num_experts: int,
+        hidden_size: int,
+        intermediate_size: int,
     ):
-        """Create quantized weight buffers."""
-        E = self.num_experts
-        N = self.intermediate_size_padded // tp_size  # Per-partition intermediate
-        K = self.hidden_size
-        block = self.block_size
+        self.num_experts = num_experts
+        self.hidden_size = hidden_size
+        self.intermediate_size = intermediate_size
+        self.mxfp4_block = 32
         
-        # w13 (gate + up, column parallel): [E, 2*N, K/2] uint8 (packed FP4)
-        # Each uint8 holds 2 FP4 values
+        # Pad intermediate size to multiple of 64 for Triton
+        self.intermediate_size_padded = (
+            (intermediate_size + 63) // 64 * 64
+        )
+        
+        # Will be set after weight processing
+        self.w13_precision_config: Optional[PrecisionConfig] = None
+        self.w2_precision_config: Optional[PrecisionConfig] = None
+        self.w13_weight: Optional[torch.Tensor] = None
+        self.w2_weight: Optional[torch.Tensor] = None
+    
+    def create_weights(self, layer: torch.nn.Module):
+        """Create MXFP4 weight buffers."""
+        E = self.num_experts
+        N = self.intermediate_size_padded
+        K = self.hidden_size
+        block = self.mxfp4_block
+        
+        # w13 (gate + up, column parallel): [E, 2*N, K/2] uint8
         w13_weight = Parameter(
             torch.zeros(E, 2 * N, K // 2, dtype=torch.uint8),
             requires_grad=False,
         )
         layer.register_parameter("w13_weight", w13_weight)
         
-        # w13 scales: [E, 2*N, K/block] uint8 (FP8)
+        # w13 scales: [E, 2*N, K/block] uint8
         w13_weight_scale = Parameter(
             torch.zeros(E, 2 * N, K // block, dtype=torch.uint8),
             requires_grad=False,
@@ -77,14 +121,14 @@ class Mxfp4MoEMethod:
         )
         layer.register_parameter("w13_bias", w13_bias)
         
-        # w2 (down, row parallel): [E, K, N/2] uint8 (packed FP4)
+        # w2 (down, row parallel): [E, K, N/2] uint8
         w2_weight = Parameter(
             torch.zeros(E, K, N // 2, dtype=torch.uint8),
             requires_grad=False,
         )
         layer.register_parameter("w2_weight", w2_weight)
         
-        # w2 scales: [E, K, N/block] uint8 (FP8)
+        # w2 scales: [E, K, N/block] uint8
         w2_weight_scale = Parameter(
             torch.zeros(E, K, N // block, dtype=torch.uint8),
             requires_grad=False,
@@ -103,150 +147,58 @@ class Mxfp4MoEMethod:
             f"w13=[{E}, {2*N}, {K//2}], w2=[{E}, {K}, {N//2}]"
         )
     
-    def dequantize_mxfp4(
-        self,
-        weight: torch.Tensor,
-        scale: torch.Tensor,
-        dtype: torch.dtype = torch.bfloat16,
-    ) -> torch.Tensor:
-        """
-        Dequantize MXFP4 weights to floating point.
+    def process_weights_after_loading(self, layer: torch.nn.Module):
+        """Swizzle weights after loading for optimal Triton kernel performance."""
+        logger.info("Processing MXFP4 weights with Triton backend...")
         
-        MXFP4 format:
-        - Each uint8 contains 2 FP4 values (4 bits each)
-        - FP4 = sign(1) + exponent(2) + mantissa(1)
-        - Scale is FP8 per block of 32 elements
+        # Convert biases to float32 (required by Triton kernels)
+        w13_bias = layer.w13_bias.to(torch.float32)
+        w2_bias = layer.w2_bias.to(torch.float32)
         
-        Args:
-            weight: [E, M, N/2] uint8 packed weights
-            scale: [E, M, N/block] uint8 FP8 scales
-            dtype: Output dtype (bfloat16)
+        layer.w13_bias = Parameter(w13_bias, requires_grad=False)
+        layer.w2_bias = Parameter(w2_bias, requires_grad=False)
         
-        Returns:
-            Dequantized weights [E, M, N]
-        """
-        E, M, N_half = weight.shape
-        N = N_half * 2
-        block = self.block_size
+        # Determine num_warps based on batch size
+        num_warps = 8  # Default for H100
         
-        # Unpack FP4 values from uint8
-        # Lower 4 bits and upper 4 bits
-        low = (weight & 0x0F).to(torch.int8)
-        high = ((weight >> 4) & 0x0F).to(torch.int8)
-        
-        # Interleave low and high
-        unpacked = torch.stack([low, high], dim=-1).view(E, M, N)
-        
-        # Convert FP4 to float
-        # FP4: sign(1) + exp(2) + mantissa(1)
-        # exp=0: subnormal, value = (-1)^s * 2^(-1) * (0.m)
-        # exp=1,2,3: normal, value = (-1)^s * 2^(exp-1) * (1.m)
-        sign = ((unpacked >> 3) & 1).float() * -2.0 + 1.0  # -1 or 1
-        exp = (unpacked >> 1) & 0x3
-        mantissa = unpacked & 0x1
-        
-        # Compute value
-        # Subnormal (exp=0): 0.5 * mantissa
-        # Normal: 2^(exp-1) * (1 + 0.5*mantissa)
-        is_subnormal = (exp == 0)
-        exp_float = exp.float()
-        mant_float = mantissa.float()
-        
-        value = torch.where(
-            is_subnormal,
-            0.5 * mant_float,
-            torch.pow(2.0, exp_float - 1.0) * (1.0 + 0.5 * mant_float)
+        # Swizzle w13 weights
+        w13_weight, w13_flex, w13_scale = swizzle_mxfp4_weights(
+            layer.w13_weight, layer.w13_weight_scale, num_warps
         )
-        dequant = sign * value
         
-        # Apply scales (FP8 E4M3)
-        # Expand scale to match weight shape
-        scale_expanded = scale.repeat_interleave(block, dim=-1)
-        if scale_expanded.shape[-1] > N:
-            scale_expanded = scale_expanded[..., :N]
-        
-        # Convert FP8 scale to float
-        scale_float = self._fp8_to_float(scale_expanded)
-        
-        # Apply scale
-        result = dequant * scale_float
-        
-        return result.to(dtype)
-    
-    def _fp8_to_float(self, x: torch.Tensor) -> torch.Tensor:
-        """Convert FP8 E4M3 to float."""
-        # FP8 E4M3: sign(1) + exp(4) + mantissa(3)
-        sign = ((x >> 7) & 1).float() * -2.0 + 1.0
-        exp = ((x >> 3) & 0xF).int()
-        mant = (x & 0x7).float() / 8.0
-        
-        # Compute value: 2^(exp-7) * (1 + mant) for exp > 0
-        # For exp=0: subnormal
-        is_subnormal = (exp == 0)
-        result = torch.where(
-            is_subnormal,
-            mant / 64.0,  # 2^(-6) * mant
-            torch.pow(2.0, exp.float() - 7.0) * (1.0 + mant)
+        # Swizzle w2 weights
+        w2_weight, w2_flex, w2_scale = swizzle_mxfp4_weights(
+            layer.w2_weight, layer.w2_weight_scale, num_warps
         )
-        return sign * result
+        
+        # Create precision configs
+        self.w13_precision_config = PrecisionConfig(
+            weight_scale=w13_scale, flex_ctx=FlexCtx(rhs_data=w13_flex)
+        )
+        self.w2_precision_config = PrecisionConfig(
+            weight_scale=w2_scale, flex_ctx=FlexCtx(rhs_data=w2_flex)
+        )
+        
+        # Store swizzled weights
+        self.w13_weight = w13_weight
+        self.w2_weight = w2_weight
+        
+        # Update layer weights
+        del layer.w13_weight
+        del layer.w2_weight
+        layer.w13_weight = w13_weight
+        layer.w2_weight = w2_weight
+        
+        logger.info("MXFP4 weight processing complete (Triton backend)")
     
-    def forward(
-        self,
-        layer: torch.nn.Module,
-        x: torch.Tensor,
-        topk_weights: torch.Tensor,
-        topk_ids: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Forward pass with MXFP4 dequantization.
+    def get_quant_config(self, layer: torch.nn.Module):
+        """Get quantization config for Triton MoE forward."""
+        from mini_vllm.layers.fused_moe.triton_moe import Mxfp4QuantConfig
         
-        This is a fallback implementation that dequantizes on-the-fly.
-        For production, use Triton kernels for fused MXFP4 matmul.
-        """
-        batch_size, hidden_size = x.shape
-        device = x.device
-        dtype = x.dtype
-        
-        # Dequantize weights
-        w13 = self.dequantize_mxfp4(layer.w13_weight, layer.w13_weight_scale, dtype)
-        w2 = self.dequantize_mxfp4(layer.w2_weight, layer.w2_weight_scale, dtype)
-        
-        # Get dimensions
-        E, N2, K = w13.shape  # N2 = 2*N
-        N = N2 // 2
-        
-        # Initialize output
-        output = torch.zeros(batch_size, hidden_size, device=device, dtype=dtype)
-        
-        # Process each expert
-        topk = topk_weights.shape[1]
-        for k in range(topk):
-            expert_ids = topk_ids[:, k]  # [batch]
-            weights = topk_weights[:, k:k+1]  # [batch, 1]
-            
-            # Gather expert weights for this batch
-            for e in range(E):
-                mask = (expert_ids == e)
-                if not mask.any():
-                    continue
-                
-                x_e = x[mask]  # [num_tokens, K]
-                
-                # First matmul: x @ w13^T -> [num_tokens, 2*N]
-                w13_e = w13[e].T  # [K, 2*N]
-                h = x_e @ w13_e + layer.w13_bias[e]
-                
-                # SwiGLU activation
-                gate = h[:, :N]
-                up = h[:, N:]
-                h = torch.nn.functional.silu(gate) * up
-                
-                # Second matmul: h @ w2^T -> [num_tokens, K]
-                w2_e = w2[e].T  # [N, K]
-                out = h @ w2_e + layer.w2_bias[e]
-                
-                # Weighted sum
-                output[mask] += weights[mask] * out
-        
-        return output
-
+        return Mxfp4QuantConfig(
+            w1_bias=layer.w13_bias,
+            w2_bias=layer.w2_bias,
+            w1_precision=self.w13_precision_config,
+            w2_precision=self.w2_precision_config,
+            use_mxfp4_w4a16=True,
+        )
