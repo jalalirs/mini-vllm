@@ -1,17 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Attention layer with CUDA paged attention kernels."""
+"""Attention layer with flash-attn and paged attention kernels."""
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Try to import flash-attn
+_FLASH_ATTN_AVAILABLE = False
+try:
+    from flash_attn import flash_attn_func, flash_attn_varlen_func
+    _FLASH_ATTN_AVAILABLE = True
+    logger.info("Using FLASH_ATTN attention backend")
+except ImportError:
+    logger.warning("flash-attn not available, using native PyTorch attention")
 
 
 class Attention(nn.Module):
-    """Multi-head attention with paged KV cache.
+    """Multi-head attention with flash-attn and paged KV cache.
     
-    Uses our compiled CUDA paged attention kernels (paged_attention_v1/v2).
-    Falls back to native PyTorch for prefill or when CUDA ops unavailable.
+    Uses:
+    - flash-attn for prefill (high performance)
+    - Paged attention CUDA kernels for decode
+    - Falls back to native PyTorch when above unavailable
     
     Supports:
     - Grouped Query Attention (GQA)
@@ -134,7 +148,44 @@ class Attention(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
     ) -> torch.Tensor:
-        """Native PyTorch attention (for prefill or fallback)."""
+        """Forward using flash-attn or native PyTorch."""
+        # Use flash-attn if available
+        if _FLASH_ATTN_AVAILABLE:
+            return self._forward_flash_attn(query, key, value)
+        
+        # Fallback to native PyTorch
+        return self._forward_pytorch(query, key, value)
+    
+    def _forward_flash_attn(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+    ) -> torch.Tensor:
+        """Flash attention forward (high performance for prefill)."""
+        # flash_attn expects [batch, seqlen, nheads, headdim]
+        # We have [num_tokens, num_heads, head_dim]
+        # Treat as batch=1 for simplicity
+        query = query.unsqueeze(0)  # [1, num_tokens, num_heads, head_dim]
+        key = key.unsqueeze(0)
+        value = value.unsqueeze(0)
+        
+        output = flash_attn_func(
+            query, key, value,
+            softmax_scale=self.scale,
+            causal=True,
+            window_size=(self.sliding_window, self.sliding_window) if self.sliding_window else (-1, -1),
+        )
+        
+        return output.squeeze(0)  # [num_tokens, num_heads, head_dim]
+    
+    def _forward_pytorch(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+    ) -> torch.Tensor:
+        """Native PyTorch attention (fallback)."""
         num_tokens = query.shape[0]
         
         # Expand KV heads for GQA
