@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING
 from vllm import envs
 from vllm.plugins import PLATFORM_PLUGINS_GROUP, load_plugins_by_group
 from vllm.utils.import_utils import resolve_obj_by_qualname
-from vllm.utils.torch_utils import supports_xccl
-
 from .interface import CpuArchEnum, Platform, PlatformEnum
 
 logger = logging.getLogger(__name__)
@@ -30,30 +28,6 @@ def vllm_version_matches_substr(substr: str) -> bool:
         )
         raise e
     return substr in vllm_version
-
-
-def tpu_platform_plugin() -> str | None:
-    logger.debug("Checking if TPU platform is available.")
-
-    # Check for Pathways TPU proxy
-    if envs.VLLM_TPU_USING_PATHWAYS:
-        logger.debug("Confirmed TPU platform is available via Pathways proxy.")
-        return "tpu_inference.platforms.tpu_platform.TpuPlatform"
-
-    # Check for libtpu installation
-    try:
-        # While it's technically possible to install libtpu on a
-        # non-TPU machine, this is a very uncommon scenario. Therefore,
-        # we assume that libtpu is installed only if the machine
-        # has TPUs.
-
-        import libtpu  # noqa: F401
-
-        logger.debug("Confirmed TPU platform is available.")
-        return "vllm.platforms.tpu.TpuPlatform"
-    except Exception as e:
-        logger.debug("TPU platform is not available because: %s", str(e))
-        return None
 
 
 def cuda_platform_plugin() -> str | None:
@@ -107,84 +81,9 @@ def cuda_platform_plugin() -> str | None:
     return "vllm.platforms.cuda.CudaPlatform" if is_cuda else None
 
 
-def rocm_platform_plugin() -> str | None:
-    is_rocm = False
-    logger.debug("Checking if ROCm platform is available.")
-    try:
-        import amdsmi
-
-        amdsmi.amdsmi_init()
-        try:
-            if len(amdsmi.amdsmi_get_processor_handles()) > 0:
-                is_rocm = True
-                logger.debug("Confirmed ROCm platform is available.")
-            else:
-                logger.debug("ROCm platform is not available because no GPU is found.")
-        finally:
-            amdsmi.amdsmi_shut_down()
-    except Exception as e:
-        logger.debug("ROCm platform is not available because: %s", str(e))
-
-    return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None
-
-
-def xpu_platform_plugin() -> str | None:
-    is_xpu = False
-    logger.debug("Checking if XPU platform is available.")
-    try:
-        # installed IPEX if the machine has XPUs.
-        import intel_extension_for_pytorch  # noqa: F401
-        import torch
-
-        if supports_xccl():
-            dist_backend = "xccl"
-        else:
-            dist_backend = "ccl"
-            import oneccl_bindings_for_pytorch  # noqa: F401
-
-        if hasattr(torch, "xpu") and torch.xpu.is_available():
-            is_xpu = True
-            from vllm.platforms.xpu import XPUPlatform
-
-            XPUPlatform.dist_backend = dist_backend
-            logger.debug("Confirmed %s backend is available.", XPUPlatform.dist_backend)
-            logger.debug("Confirmed XPU platform is available.")
-    except Exception as e:
-        logger.debug("XPU platform is not available because: %s", str(e))
-
-    return "vllm.platforms.xpu.XPUPlatform" if is_xpu else None
-
-
-def cpu_platform_plugin() -> str | None:
-    is_cpu = False
-    logger.debug("Checking if CPU platform is available.")
-    try:
-        is_cpu = vllm_version_matches_substr("cpu")
-        if is_cpu:
-            logger.debug(
-                "Confirmed CPU platform is available because vLLM is built with CPU."
-            )
-        if not is_cpu:
-            import sys
-
-            is_cpu = sys.platform.startswith("darwin")
-            if is_cpu:
-                logger.debug(
-                    "Confirmed CPU platform is available because the machine is MacOS."
-                )
-
-    except Exception as e:
-        logger.debug("CPU platform is not available because: %s", str(e))
-
-    return "vllm.platforms.cpu.CpuPlatform" if is_cpu else None
-
-
+# mini-vLLM: Only CUDA platform supported
 builtin_platform_plugins = {
-    "tpu": tpu_platform_plugin,
     "cuda": cuda_platform_plugin,
-    "rocm": rocm_platform_plugin,
-    "xpu": xpu_platform_plugin,
-    "cpu": cpu_platform_plugin,
 }
 
 

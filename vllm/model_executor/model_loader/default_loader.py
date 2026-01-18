@@ -241,21 +241,7 @@ class DefaultModelLoader(BaseModelLoader):
                     self.load_config.pt_load_map_location,
                 )
 
-        if current_platform.is_tpu():
-            from vllm.platforms.tpu import USE_TPU_INFERENCE
-
-            if not USE_TPU_INFERENCE:
-                # In PyTorch XLA, we should call `torch_xla.sync`
-                # frequently so that not too many ops are accumulated
-                # in the XLA program.
-                import torch_xla
-
-                def _xla_weights_iterator(iterator: Generator):
-                    for weights in iterator:
-                        yield weights
-                        torch_xla.sync(wait=False)
-
-                weights_iterator = _xla_weights_iterator(weights_iterator)
+        # mini-vLLM: TPU not supported, removed TPU-specific code
 
         if self.counter_before_loading_weights == 0.0:
             self.counter_before_loading_weights = time.perf_counter()

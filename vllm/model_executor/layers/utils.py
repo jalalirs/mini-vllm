@@ -129,6 +129,8 @@ def use_aiter_triton_gemm(n, m, k, dtype):
 def rocm_unquantized_gemm_impl(
     x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor | None = None
 ) -> torch.Tensor:
+    # mini-vLLM: ROCm not supported, use default implementation
+    raise NotImplementedError("ROCm not supported in mini-vLLM")
     from vllm.platforms.rocm import on_gfx9
 
     n = x.numel() / x.size(-1)

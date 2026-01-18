@@ -41,12 +41,8 @@ def main():
         from vllm import platforms
 
         if platforms.current_platform.is_unspecified():
-            from vllm.platforms.cpu import CpuPlatform
-
-            platforms.current_platform = CpuPlatform()
-            logger.info(
-                "Unspecified platform detected, switching to CPU Platform instead."
-            )
+            # mini-vLLM: Only CUDA supported
+            raise RuntimeError("mini-vLLM requires CUDA. No GPU detected.")
 
     parser = FlexibleArgumentParser(
         description="vLLM CLI",

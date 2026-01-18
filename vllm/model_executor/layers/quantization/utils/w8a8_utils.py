@@ -189,15 +189,8 @@ def rocm_per_tensor_w8a8_scaled_mm_impl(
     scale_b: torch.Tensor,
     bias: torch.Tensor,
 ) -> torch.Tensor:
-    from vllm.platforms.rocm import on_mi3xx
-
-    if (
-        envs.VLLM_ROCM_USE_SKINNY_GEMM
-        and on_mi3xx()
-        and qinput.shape[0] == 1
-        and qinput.shape[1] % 16 == 0
-        and ((bias is None) or (bias.dtype == out_dtype))
-    ):
+    # mini-vLLM: ROCm not supported, skip ROCm-specific path
+    if False:
         output = ops.wvSplitKQ(
             weight.t(),
             qinput,

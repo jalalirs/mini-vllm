@@ -299,19 +299,8 @@ def chunked_prefill_paged_decode(
 
     num_queries_per_kv_padded = max(triton.next_power_of_2(num_queries_per_kv), 16)
 
-    from vllm.platforms.rocm import use_rocm_custom_paged_attention
-
-    use_custom = use_rocm_custom_paged_attention(
-        query.dtype,
-        head_size,
-        block_size,
-        num_queries_per_kv,
-        max_seq_len,
-        sliding_window,
-        kv_cache_dtype,
-        alibi_slopes,
-        sinks,
-    )
+    # mini-vLLM: ROCm not supported, always use default path
+    use_custom = False
     if use_custom:
         _PARTITION_SIZE_ROCM = 256
         max_num_partitions = (
