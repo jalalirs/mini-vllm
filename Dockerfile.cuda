@@ -1,0 +1,90 @@
+# =============================================================================
+# Mini-vLLM CUDA Image
+# =============================================================================
+# Contains: Flash Attention v3 for H100 (SM90) built from source via CMake
+# CMake FetchContent downloads flash-attention automatically
+# Rebuild: Rarely (only when FA3 or kernels change)
+# Build time: ~15 minutes with high CPU resources
+# =============================================================================
+
+ARG ESSENTIALS_IMAGE=mini-vllm-essentials:latest
+FROM ${ESSENTIALS_IMAGE}
+
+ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/venv"
+WORKDIR /build
+
+# Build configuration for H100 (SM90)
+ENV TORCH_CUDA_ARCH_LIST="9.0"
+ENV MAX_JOBS=32
+ENV NVCC_THREADS=8
+
+# =============================================================================
+# Stage 1: Verify PyTorch before building
+# =============================================================================
+RUN echo "=== VERIFYING PYTORCH ===" && \
+    python3 -c "import torch; print(f'PyTorch: {torch.__version__}')" && \
+    python3 -c "import torch; print(f'CUDA compiled: {torch.version.cuda}')" && \
+    python3 -c "import triton; print(f'Triton: {triton.__version__}')"
+
+# =============================================================================
+# Stage 2: Copy mini-vLLM source for CMake build
+# =============================================================================
+COPY csrc /build/csrc
+COPY cmake /build/cmake
+COPY CMakeLists.txt /build/
+COPY vllm/envs.py /build/vllm/envs.py
+COPY vllm/__init__.py /build/vllm/__init__.py
+
+# =============================================================================
+# Stage 3: Build vLLM CUDA kernels + Flash Attention via CMake
+# CMake FetchContent will download flash-attention from git automatically
+# =============================================================================
+RUN echo "=== BUILDING VLLM + FLASH ATTENTION FOR H100 (SM90) ===" && \
+    echo "Build config: MAX_JOBS=$MAX_JOBS, NVCC_THREADS=$NVCC_THREADS" && \
+    cd /build && \
+    mkdir -p build_cuda && \
+    cd build_cuda && \
+    cmake .. \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CUDA_ARCHITECTURES=90 \
+        -DVLLM_TARGET_DEVICE=cuda \
+        -DVLLM_PYTHON_EXECUTABLE=$(which python3) \
+        -DCMAKE_INSTALL_PREFIX=/build/install \
+        -DFETCHCONTENT_QUIET=OFF \
+    2>&1 | tee /build/cmake_configure.log
+
+# Build with parallel jobs
+RUN cd /build/build_cuda && \
+    cmake --build . -j${MAX_JOBS} 2>&1 | tee /build/cuda_kernels_build.log || \
+    echo "Build completed (check log for details)"
+
+# Install built kernels
+RUN cd /build/build_cuda && \
+    cmake --install . 2>&1 | tee /build/cuda_kernels_install.log || \
+    echo "Install completed"
+
+# =============================================================================
+# Stage 4: Verify all build artifacts
+# =============================================================================
+RUN echo "=== BUILD ARTIFACTS SUMMARY ===" && \
+    echo "" && \
+    echo "PyTorch: $(python3 -c 'import torch; print(torch.__version__)')" && \
+    echo "Triton: $(python3 -c 'import triton; print(triton.__version__)')" && \
+    echo "" && \
+    echo "1. Flash Attention .so files:" && \
+    (find /build -name "*flash*.so" -type f 2>/dev/null | head -10 || echo "None") && \
+    echo "" && \
+    echo "2. vLLM CUDA kernels .so files:" && \
+    (find /build/build_cuda -name "*.so" -type f 2>/dev/null || echo "None") && \
+    (find /build/install -name "*.so" -type f 2>/dev/null || echo "None") && \
+    echo "" && \
+    echo "3. Build logs:" && \
+    (ls -la /build/*.log 2>/dev/null || echo "No logs") && \
+    echo "" && \
+    echo "=== CUDA IMAGE BUILD COMPLETE ==="
+
+# Store build artifacts info for server stage
+RUN echo "/build/build_cuda" > /build/artifact_paths.txt && \
+    echo "/build/install" >> /build/artifact_paths.txt

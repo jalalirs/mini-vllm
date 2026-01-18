@@ -1,0 +1,206 @@
+ Mini-vLLM Project - Full Context & Deployment Guide
+
+  Project Objective
+
+  Build and deploy Mini-vLLM - a minimal, stripped-down vLLM inference server optimized for GPT-OSS models on H100 GPUs running on AWS HyperPod Kubernetes cluster.
+
+  Key requirements:
+  - Compile CUDA kernels and Flash Attention v3 FROM SOURCE (no prebuilt wheels)
+  - Target H100 GPUs (SM90) with Flash Attention v3
+  - 3-stage Docker build for optimal caching
+  - Deploy to HyperPod with Kueue scheduling
+
+  ---
+  Architecture: 3-Stage Docker Build
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ Stage 1: mini-vllm-essentials (~8GB, rarely rebuilt)            │
+  │ - NVIDIA CUDA 12.9.1 base                                       │
+  │ - Python 3.12, CMake 3.28                                       │
+  │ - PyTorch 2.9.1 + Triton 3.2+                                   │
+  │ - All runtime dependencies from requirements/common.txt         │
+  └─────────────────────────────────────────────────────────────────┘
+                                ↓
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ Stage 2: mini-vllm-cuda (~2GB, rebuild on kernel changes)       │
+  │ - CUTLASS 4.2.1 (fetched via CMake)                             │
+  │ - Flash Attention v3 for SM90 (fetched and compiled from source)│
+  │ - vLLM CUDA kernels compiled for H100                           │
+  │ - Output: .so files in /build/install/vllm/                     │
+  └─────────────────────────────────────────────────────────────────┘
+                                ↓
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ Stage 3: mini-vllm-server (~10GB, fast rebuild on code changes) │
+  │ - Copies compiled .so files from cuda stage                     │
+  │ - Copies Python vllm/ source code                               │
+  │ - Lightweight runtime image                                     │
+  │ - Entrypoint: vllm serve                                        │
+  └─────────────────────────────────────────────────────────────────┘
+
+  ---
+  AWS HyperPod Environment
+  ┌──────────────┬────────────────────────────────────────────────────────────────────┐
+  │   Setting    │                               Value                                │
+  ├──────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Namespace    │ hyperpod-ns-inference                                              │
+  ├──────────────┼────────────────────────────────────────────────────────────────────┤
+  │ ECR Registry │ 972488948509.dkr.ecr.eu-west-2.amazonaws.com/engineering/inference │
+  ├──────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Region       │ eu-west-2                                                          │
+  ├──────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Node Type    │ ml.p5.48xlarge (8x H100 GPUs)                                      │
+  ├──────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Kueue Queue  │ hyperpod-ns-inference-localqueue                                   │
+  ├──────────────┼────────────────────────────────────────────────────────────────────┤
+  │ S3 PVC       │ inference-pvc (mounts S3 bucket humain-inference-team to /mnt/s3)  │
+  ├──────────────┼────────────────────────────────────────────────────────────────────┤
+  │ Model Path   │ /mnt/s3/inference/models/gpt-oss-20b                               │
+  └──────────────┴────────────────────────────────────────────────────────────────────┘
+  ---
+  Current Status
+
+  ✅ Completed
+
+  1. CMakeLists.txt Fixed - Simplified to only include source files that exist in mini-vllm's csrc/ directory. The original vLLM CMakeLists.txt referenced files (mamba, gptq, awq, gguf, marlin, machete) that were stripped out.
+  2. Essentials Image Built - Successfully pushed:
+  972488948509.dkr.ecr.eu-west-2.amazonaws.com/engineering/inference/mini-vllm-essentials:latest
+  3. CUDA Image Built - Successfully compiled from source:
+    - CUTLASS 4.2.1
+    - Flash Attention v3 for SM90 (H100)
+    - 335 CUDA kernels compiled
+  972488948509.dkr.ecr.eu-west-2.amazonaws.com/engineering/inference/mini-vllm-cuda:latest
+
+  ⏳ Remaining
+
+  4. Build Server Image
+  5. Deploy to HyperPod
+  6. Test with gpt-oss-20b model
+
+  ---
+  File Structure
+
+  mini-vllm/
+  ├── CMakeLists.txt              # Simplified for mini-vllm (FIXED)
+  ├── Dockerfile.essentials       # Stage 1: Python + PyTorch + deps
+  ├── Dockerfile.cuda             # Stage 2: CUDA kernels + Flash Attention
+  ├── Dockerfile.server           # Stage 3: Runtime server image
+  ├── csrc/                       # CUDA kernel source files
+  │   ├── attention/              # Paged attention kernels
+  │   ├── quantization/           # Quantization kernels (w8a8, fp4, etc.)
+  │   ├── moe/                    # MoE kernels
+  │   └── ...
+  ├── cmake/
+  │   ├── utils.cmake
+  │   └── external_projects/
+  │       ├── vllm_flash_attn.cmake  # FetchContent for Flash Attention
+  │       ├── triton_kernels.cmake
+  │       └── ...
+  ├── vllm/                       # Python source code
+  ├── requirements/
+  │   └── common.txt              # Runtime dependencies
+  └── deploy/
+      ├── aws/
+      │   ├── credentials.sh      # AWS session credentials (temporary)
+      │   └── env.sh              # Environment configuration
+      └── scripts/
+          ├── build.sh            # Docker build script
+          └── deploy.sh           # Kubernetes deployment script
+
+  ---
+  Build Instructions
+
+  Prerequisites
+
+  cd C:/Users/RidwanJalali/Documents/code/vllm/mini-vllm
+
+  # Load AWS credentials (REQUIRED - these are session tokens)
+  source deploy/aws/credentials.sh
+  source deploy/aws/env.sh
+
+  Build All Images
+
+  # Build all 3 stages in order
+  bash deploy/scripts/build.sh all
+
+  # OR build individually:
+  bash deploy/scripts/build.sh essentials  # Stage 1
+  bash deploy/scripts/build.sh cuda        # Stage 2 (depends on essentials)
+  bash deploy/scripts/build.sh server      # Stage 3 (depends on cuda)
+
+  The build script:
+  1. Creates/uses a builder pod (mini-vllm-image-builder) on HyperPod with Docker-in-Docker
+  2. Copies source code to the builder pod
+  3. Logs into ECR
+  4. Builds and pushes each image
+
+  ---
+  Deploy Instructions
+
+  Deploy to HyperPod
+
+  bash deploy/scripts/deploy.sh
+
+  This creates a Kubernetes Deployment with:
+  - 1 replica running the server image
+  - Node selector for ml.p5.48xlarge
+  - Kueue queue label for scheduling
+  - S3 volume mount at /mnt/s3
+  - Environment variables for model path, tensor parallelism, etc.
+
+  Check Deployment Status
+
+  # Check pods
+  kubectl get pods -n hyperpod-ns-inference -l app=mini-vllm-server
+
+  # Check logs
+  kubectl logs -f deployment/mini-vllm-server -n hyperpod-ns-inference
+
+  # Describe pod for events/errors
+  kubectl describe pod -l app=mini-vllm-server -n hyperpod-ns-inference
+
+  Access the Server
+
+  # Port forward to local machine
+  kubectl port-forward svc/mini-vllm-server 8000:8000 -n hyperpod-ns-inference
+
+  # Test health
+  curl http://localhost:8000/health
+
+  # Test inference
+  curl http://localhost:8000/v1/completions \
+    -H "Content-Type: application/json" \
+    -d '{"model": "gpt-oss-20b", "prompt": "Hello", "max_tokens": 50}'
+
+  ---
+  Key Configuration Files
+
+  deploy/aws/env.sh
+
+  export MINI_VLLM_NAMESPACE="hyperpod-ns-inference"
+  export MINI_VLLM_REGISTRY="972488948509.dkr.ecr.eu-west-2.amazonaws.com/engineering/inference"
+  export MINI_VLLM_REGISTRY_REGION="eu-west-2"
+  export MINI_VLLM_PREFIX="mini-vllm-"
+  export MINI_VLLM_KUEUE_QUEUE="hyperpod-ns-inference-localqueue"
+  export MINI_VLLM_NODE_TYPE="ml.p5.48xlarge"
+  export MINI_VLLM_S3_PVC="inference-pvc"
+  export MINI_VLLM_S3_MOUNT="/mnt/s3"
+  export MINI_VLLM_MODEL_PATH="/mnt/s3/inference/models/gpt-oss-20b"
+
+  ---
+  Troubleshooting
+
+  Common Issues
+
+  1. Kueue admission denied: Ensure kueue.x-k8s.io/queue-name label is on both Deployment metadata AND pod template metadata
+  2. Node selector mismatch: Node labels use ml.p5.48xlarge not p5.48xlarge
+  3. Missing module errors: Check that all dependencies in requirements/common.txt are installed in Dockerfile.essentials
+  4. CMake build fails: Ensure source files referenced in CMakeLists.txt actually exist in csrc/
+  5. AWS credentials expired: Re-run source deploy/aws/credentials.sh (session tokens expire)
+
+  ---
+  Critical Notes
+
+  1. NO PREBUILT WHEELS - Everything must compile from source. Flash Attention v3 is fetched via CMake FetchContent and compiled for SM90.
+  2. Build logs - Always watch build logs in real-time, don't run in background
+  3. AWS credentials - The credentials.sh contains temporary session tokens that expire
+  4. Model storage - Models are on S3 mounted via Mountpoint CSI, not FSx Lustre

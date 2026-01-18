@@ -1,0 +1,67 @@
+# =============================================================================
+# Mini-vLLM Common Dependencies
+# =============================================================================
+# Core dependencies for mini-vLLM (GPT-OSS focused, H100 optimized)
+# Stripped down from vLLM's full common.txt
+# =============================================================================
+
+# Core ML
+transformers>=4.56.0,<5
+tokenizers>=0.21.1
+safetensors>=0.4.0
+numpy
+einops
+
+# API Server
+fastapi[standard]>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.12.0
+aiohttp
+requests>=2.26.0
+
+# Serialization
+msgspec
+protobuf
+pyyaml
+partial-json-parser
+cloudpickle
+cbor2
+ijson
+
+# Monitoring
+prometheus_client>=0.18.0
+prometheus-fastapi-instrumentator>=7.0.0
+py-cpuinfo
+psutil
+filelock>=3.16.1
+cachetools
+tqdm
+
+# Communication
+pyzmq>=25.0.0
+watchfiles
+
+# Tokenizers
+tiktoken>=0.6.0
+sentencepiece
+regex
+blake3
+
+# Model file formats
+gguf>=0.17.0
+
+# Image (minimal for multimodal)
+pillow
+
+# Quantization
+compressed-tensors==0.13.0
+
+# Parsing
+lark==1.2.2
+typing_extensions>=4.10
+
+# OpenAI compatibility
+openai>=1.99.1
+
+# SageMaker/Container Standards
+model-hosting-container-standards>=0.1.10,<1.0.0

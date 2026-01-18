@@ -1,0 +1,17 @@
+# =============================================================================
+# Mini-vLLM CUDA Dependencies
+# =============================================================================
+# For H100 GPUs with CUDA 12.4+
+# =============================================================================
+
+# Include common dependencies
+-r common.txt
+
+# PyTorch with CUDA 12.4
+# Install with: pip install -r requirements/cuda.txt --extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.9.1
+torchvision==0.24.1
+torchaudio==2.9.1
+
+# Triton for custom kernels
+triton>=3.2.0

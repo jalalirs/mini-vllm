@@ -1,0 +1,193 @@
+# =============================================================================
+# Mini-vLLM Server Image
+# =============================================================================
+# Contains: Python code + compiled CUDA libs (copied from cuda stage)
+# Rebuild: Fast (~1-2 min) when only Python code changes
+# Size: ~10GB (runtime with CUDA libs)
+# =============================================================================
+
+ARG CUDA_IMAGE=mini-vllm-cuda:latest
+ARG CUDA_VERSION=12.9.1
+
+# =============================================================================
+# Stage 1: Get compiled libraries from CUDA build stage
+# =============================================================================
+FROM ${CUDA_IMAGE} AS cuda-libs
+
+# =============================================================================
+# Stage 2: Runtime image (minimal CUDA runtime, not full devel)
+# =============================================================================
+# Using devel image because setup.py checks for nvcc during metadata generation
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# =============================================================================
+# Install minimal runtime dependencies
+# =============================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends --allow-change-held-packages \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    curl \
+    libibverbs1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python
+
+# =============================================================================
+# Copy Python virtual environment from cuda image (has all deps installed)
+# =============================================================================
+COPY --from=cuda-libs /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/venv"
+
+# =============================================================================
+# Setup application directory
+# =============================================================================
+WORKDIR /app
+
+# Copy Python application code (this layer changes most frequently)
+COPY vllm /app/vllm
+COPY requirements /app/requirements
+COPY pyproject.toml /app/
+COPY setup.py /app/
+
+# =============================================================================
+# Copy compiled CUDA extensions to vllm package (where Python can find them)
+# =============================================================================
+# Copy core extensions (_C, _moe_C, cumem_allocator)
+COPY --from=cuda-libs /build/install/vllm/_C.abi3.so /app/vllm/
+COPY --from=cuda-libs /build/install/vllm/_moe_C.abi3.so /app/vllm/
+COPY --from=cuda-libs /build/install/vllm/cumem_allocator.abi3.so /app/vllm/
+
+# Copy Flash Attention extensions
+COPY --from=cuda-libs /build/install/vllm/vllm_flash_attn /app/vllm/vllm_flash_attn
+
+# =============================================================================
+# Install mini-vLLM package (editable mode, no deps - they're already installed)
+# =============================================================================
+# Skip CUDA extension building - kernels are already in cuda image
+# VLLM_TARGET_DEVICE=empty tells setup.py to not build any extensions (only during install)
+ENV SETUPTOOLS_SCM_PRETEND_VERSION="0.1.0"
+RUN VLLM_TARGET_DEVICE=empty pip install -e . --no-deps --no-build-isolation
+
+# Install any missing dependencies not in essentials image
+RUN pip install --no-cache-dir gguf>=0.17.0 openai-harmony pybase64 mistral_common llguidance diskcache xgrammar lm-format-enforcer numba
+
+# =============================================================================
+# Setup Python paths
+# =============================================================================
+ENV PYTHONPATH="/app:$PYTHONPATH"
+
+# Workaround for CUDA compatibility
+RUN ldconfig /usr/local/cuda/compat/ 2>/dev/null || true
+
+# =============================================================================
+# Create launcher script with tensor parallelism support
+# =============================================================================
+RUN printf '%s\n' '#!/bin/bash' \
+    'set -e' \
+    '' \
+    '# Parse tensor parallel size from args or env' \
+    'TP=${TENSOR_PARALLEL_SIZE:-1}' \
+    'PP=${PIPELINE_PARALLEL_SIZE:-1}' \
+    '' \
+    'for arg in "$@"; do' \
+    '    case $arg in' \
+    '        --tensor-parallel-size=*) TP="${arg#*=}" ;;' \
+    '        --pipeline-parallel-size=*) PP="${arg#*=}" ;;' \
+    '    esac' \
+    'done' \
+    '' \
+    '# Calculate total GPUs needed' \
+    'TOTAL_GPUS=$((TP * PP))' \
+    '' \
+    'echo "=============================================="' \
+    'echo "Mini-vLLM Server"' \
+    'echo "=============================================="' \
+    'echo "Tensor Parallel: $TP"' \
+    'echo "Pipeline Parallel: $PP"' \
+    'echo "Total GPUs: $TOTAL_GPUS"' \
+    'echo "=============================================="' \
+    '' \
+    '# Verify CUDA is available' \
+    'python3 -c "import torch; print(f'"'"'CUDA available: {torch.cuda.is_available()}, Devices: {torch.cuda.device_count()}'"'"')"' \
+    '' \
+    'if [ "$TOTAL_GPUS" -gt 1 ]; then' \
+    '    echo "Starting with distributed (torchrun)..."' \
+    '    exec torchrun --standalone --nproc_per_node=$TOTAL_GPUS -m vllm.entrypoints.openai.api_server "$@"' \
+    'else' \
+    '    echo "Starting single GPU..."' \
+    '    exec python3 -m vllm.entrypoints.openai.api_server "$@"' \
+    'fi' \
+    > /app/launcher.sh && chmod +x /app/launcher.sh
+
+# =============================================================================
+# Create simple test script
+# =============================================================================
+RUN printf '%s\n' \
+    '#!/usr/bin/env python3' \
+    '"""Quick import test for mini-vLLM."""' \
+    'import sys' \
+    '' \
+    'def test_imports():' \
+    '    tests = [' \
+    '        ("torch", "import torch; print(f'"'"'PyTorch {torch.__version__}'"'"')"),'\
+    '        ("cuda", "import torch; print(f'"'"'CUDA: {torch.cuda.is_available()}'"'"')"),'\
+    '        ("transformers", "import transformers; print(f'"'"'Transformers {transformers.__version__}'"'"')"),'\
+    '        ("vllm", "import vllm; print('"'"'vLLM package OK'"'"')"),'\
+    '        ("triton", "import triton; print(f'"'"'Triton {triton.__version__}'"'"')"),'\
+    '    ]' \
+    '' \
+    '    failed = []' \
+    '    for name, code in tests:' \
+    '        try:' \
+    '            exec(code)' \
+    '            print(f"  [OK] {name}")' \
+    '        except Exception as e:' \
+    '            print(f"  [FAIL] {name}: {e}")' \
+    '            failed.append(name)' \
+    '' \
+    '    if failed:' \
+    '        print(f"\\nFailed imports: {failed}")' \
+    '        return 1' \
+    '    print("\\nAll imports successful!")' \
+    '    return 0' \
+    '' \
+    'if __name__ == "__main__":' \
+    '    sys.exit(test_imports())' \
+    > /app/test_imports.py
+
+# =============================================================================
+# Verify installation
+# =============================================================================
+RUN echo "=== VERIFYING MINI-VLLM INSTALLATION ===" && \
+    python3 /app/test_imports.py || echo "Some imports may require GPU"
+
+# =============================================================================
+# Health check
+# =============================================================================
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# =============================================================================
+# Expose port and set entrypoint
+# =============================================================================
+EXPOSE 8000
+
+# Default command shows help
+CMD ["--help"]
+ENTRYPOINT ["/app/launcher.sh"]
+
+# =============================================================================
+# Labels
+# =============================================================================
+LABEL org.opencontainers.image.title="Mini-vLLM"
+LABEL org.opencontainers.image.description="Minimal vLLM for GPT-OSS-120B on H100"
+LABEL org.opencontainers.image.vendor="Mini-vLLM Project"

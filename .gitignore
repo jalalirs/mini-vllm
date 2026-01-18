@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.so
+*.egg-info/
+build/
+dist/
+.eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+deploy/aws/env.sh
+deploy/aws/credentials.sh
+tmpclaude-*
+deploy/aws/credentials.sh
+.claude/

@@ -1,0 +1,173 @@
+# =============================================================================
+# Mini-vLLM Essentials Image
+# =============================================================================
+# Contains: Python 3.12, CMake 3.28, PyTorch 2.9.1, Triton, all runtime deps
+# Rebuild: Almost never (only when PyTorch version changes)
+# Size: ~8GB
+# =============================================================================
+
+ARG CUDA_VERSION=12.9.1
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# =============================================================================
+# Stage 1: System packages + Python 3.12
+# =============================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Python 3.12 (Ubuntu 22.04 has 3.10 by default, we need newer)
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-dev \
+    python3.12-venv \
+    python3-pip \
+    # Build tools
+    ninja-build \
+    git \
+    wget \
+    curl \
+    ccache \
+    # For InfiniBand (tensor parallelism)
+    libibverbs-dev \
+    # GCC 10+ for CUTLASS
+    gcc-10 \
+    g++-10 \
+    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 110 \
+       --slave /usr/bin/g++ g++ /usr/bin/g++-10 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3.12 /usr/bin/python
+
+# =============================================================================
+# Stage 2: CMake 3.28 (required by flash-attention and vLLM)
+# =============================================================================
+RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.0/cmake-3.28.0-linux-x86_64.tar.gz \
+    | tar xzf - -C /usr/local --strip-components=1
+
+# =============================================================================
+# Stage 3: Python virtual environment
+# =============================================================================
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/venv"
+
+# Upgrade pip and install build tools
+RUN pip install --upgrade pip wheel setuptools
+
+# =============================================================================
+# Stage 4: PyTorch 2.9.1 with CUDA 12.4
+# This is the heaviest layer (~2GB), cached separately
+# =============================================================================
+# PyTorch 2.9.1 requires CUDA 12.9 index
+RUN pip install --no-cache-dir \
+    torch==2.9.1 \
+    torchvision==0.24.1 \
+    torchaudio==2.9.1 \
+    --index-url https://download.pytorch.org/whl/cu129
+
+# =============================================================================
+# Stage 5: Triton 3.2+ (required for triton_kernels)
+# =============================================================================
+RUN pip install --no-cache-dir "triton>=3.2.0"
+
+# =============================================================================
+# Stage 6: Core runtime dependencies (from vLLM requirements/common.txt)
+# Split into groups for better caching
+# =============================================================================
+
+# Core ML dependencies
+RUN pip install --no-cache-dir \
+    transformers>=4.56.0 \
+    tokenizers>=0.21.1 \
+    safetensors>=0.4.0 \
+    numpy \
+    einops
+
+# API server dependencies
+RUN pip install --no-cache-dir \
+    "fastapi[standard]>=0.115.0" \
+    "uvicorn[standard]>=0.30.0" \
+    pydantic>=2.12.0 \
+    aiohttp \
+    requests>=2.26.0
+
+# Serialization and parsing
+RUN pip install --no-cache-dir \
+    msgspec \
+    protobuf \
+    pyyaml \
+    partial-json-parser \
+    cloudpickle \
+    cbor2 \
+    ijson
+
+# Monitoring and utilities
+RUN pip install --no-cache-dir \
+    prometheus_client>=0.18.0 \
+    prometheus-fastapi-instrumentator>=7.0.0 \
+    py-cpuinfo \
+    psutil \
+    filelock>=3.16.1 \
+    cachetools \
+    tqdm
+
+# Communication and distributed
+RUN pip install --no-cache-dir \
+    pyzmq>=25.0.0 \
+    watchfiles
+
+# Tokenizers and text processing
+RUN pip install --no-cache-dir \
+    tiktoken>=0.6.0 \
+    sentencepiece \
+    regex \
+    blake3
+
+# Image processing (for multimodal, minimal)
+RUN pip install --no-cache-dir \
+    pillow
+
+# Quantization support
+RUN pip install --no-cache-dir \
+    compressed-tensors==0.13.0
+
+# Grammar/structured output (optional but commonly used)
+RUN pip install --no-cache-dir \
+    lark==1.2.2 \
+    typing_extensions>=4.10
+
+# OpenAI compatibility
+RUN pip install --no-cache-dir \
+    "openai>=1.99.1"
+
+# SageMaker/Container Standards (required by api_server.py)
+RUN pip install --no-cache-dir \
+    "model-hosting-container-standards>=0.1.10,<1.0.0"
+
+# Build dependencies (needed for CUDA kernel compilation)
+RUN pip install --no-cache-dir \
+    cmake>=3.26.1 \
+    ninja \
+    "setuptools>=77.0.3,<81.0.0" \
+    setuptools-scm>=8 \
+    jinja2>=3.1.6 \
+    packaging>=24.2
+
+# =============================================================================
+# Verification
+# =============================================================================
+RUN echo "=== VERIFICATION ===" && \
+    python3 -c "import torch; print(f'PyTorch: {torch.__version__}')" && \
+    python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')" && \
+    python3 -c "import triton; print(f'Triton: {triton.__version__}')" && \
+    python3 -c "import transformers; print(f'Transformers: {transformers.__version__}')" && \
+    cmake --version | head -1 && \
+    gcc --version | head -1 && \
+    echo "" && \
+    echo "=== Essentials image ready ===" && \
+    echo "PyTorch 2.9.1 + CUDA 12.4 + Python 3.12"
+
