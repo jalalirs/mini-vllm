@@ -21,8 +21,6 @@ from vllm.logger import init_logger
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.model_loader import get_model
 from vllm.model_executor.models import supports_multimodal
-from vllm.model_executor.models.deepseek_v2 import DeepseekV32IndexerCache
-from vllm.model_executor.models.llama_eagle3 import Eagle3LlamaForCausalLM
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.platforms import current_platform
 from vllm.triton_utils import triton
@@ -245,7 +243,8 @@ class EagleProposer:
             last_token_indices = common_attn_metadata.query_start_loc[1:] - 1
 
         if self.method == "eagle3":
-            assert isinstance(self.model, Eagle3LlamaForCausalLM)
+            # mini-vLLM: Model must have combine_hidden_states (SupportsEagle3)
+            assert hasattr(self.model, 'combine_hidden_states')
             target_hidden_states = self.model.combine_hidden_states(
                 target_hidden_states
             )
@@ -982,12 +981,8 @@ class EagleProposer:
         target_attn_layer_names = set(
             get_layers_from_vllm_config(self.vllm_config, AttentionLayerBase).keys()
         )
-        # FIXME: support hybrid kv for draft model
-        target_indexer_layer_names = set(
-            get_layers_from_vllm_config(
-                self.vllm_config, DeepseekV32IndexerCache
-            ).keys()
-        )
+        # mini-vLLM: DeepSeek indexer cache not supported, using empty set
+        target_indexer_layer_names: set[str] = set()
 
         from vllm.compilation.backends import set_model_tag
 
@@ -1000,9 +995,8 @@ class EagleProposer:
             get_layers_from_vllm_config(self.vllm_config, AttentionLayerBase).keys()
             - target_attn_layer_names
         )
-        indexer_layers = get_layers_from_vllm_config(
-            self.vllm_config, DeepseekV32IndexerCache
-        )
+        # mini-vLLM: DeepSeek indexer cache not supported
+        indexer_layers: dict[str, object] = {}
         draft_indexer_layer_names = indexer_layers.keys() - target_indexer_layer_names
         self.attn_layer_names = list(draft_attn_layer_names - draft_indexer_layer_names)
         self.indexer_layer_names = list(draft_indexer_layer_names)
