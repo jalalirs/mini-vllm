@@ -82,7 +82,12 @@ from vllm.config.vllm import OptimizationLevel
 from vllm.logger import init_logger, suppress_logging
 from vllm.platforms import CpuArchEnum, current_platform
 from vllm.plugins import load_general_plugins
-from vllm.ray.lazy_utils import is_in_ray_actor, is_ray_initialized
+# mini-vLLM: Ray support removed
+def is_in_ray_actor() -> bool:
+    return False
+
+def is_ray_initialized() -> bool:
+    return False
 from vllm.transformers_utils.config import (
     is_interleaved,
     maybe_override_with_speculators,

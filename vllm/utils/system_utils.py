@@ -16,7 +16,9 @@ import psutil
 
 import vllm.envs as envs
 from vllm.logger import init_logger
-from vllm.ray.lazy_utils import is_in_ray_actor
+# mini-vLLM: Ray support removed
+def is_in_ray_actor() -> bool:
+    return False
 
 from .platform_utils import cuda_is_initialized, xpu_is_initialized
 

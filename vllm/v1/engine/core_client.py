@@ -43,7 +43,7 @@ from vllm.v1.engine.coordinator import DPCoordinator
 from vllm.v1.engine.core import EngineCore, EngineCoreProc
 from vllm.v1.engine.exceptions import EngineDeadError
 from vllm.v1.engine.utils import (
-    CoreEngineActorManager,
+    # mini-vLLM: CoreEngineActorManager removed (Ray support removed)
     CoreEngineProcManager,
     launch_core_engines,
 )
@@ -348,9 +348,8 @@ class BackgroundResources:
     circular reference back to the client object."""
 
     ctx: zmq.Context
-    # If CoreEngineProcManager, it manages local engines;
-    # if CoreEngineActorManager, it manages all engines.
-    engine_manager: CoreEngineProcManager | CoreEngineActorManager | None = None
+    # mini-vLLM: CoreEngineActorManager removed (Ray support removed)
+    engine_manager: CoreEngineProcManager | None = None
     coordinator: DPCoordinator | None = None
     output_socket: zmq.Socket | zmq.asyncio.Socket | None = None
     input_socket: zmq.Socket | zmq.asyncio.Socket | None = None
@@ -1326,11 +1325,9 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
         logger.info("All reconfigure messages sent, starting engine creation")
 
         # Phase 2: Create new engines now that reconfig messages have been sent
-        # self.resources.engine_manager is guaranteed to be
-        # CoreEngineActorManager for RayDPClient
-        assert isinstance(self.resources.engine_manager, CoreEngineActorManager)
-        self.resources.engine_manager.scale_up_elastic_ep(
-            self.vllm_config, new_data_parallel_size
+        # mini-vLLM: CoreEngineActorManager removed (Ray support removed)
+        raise RuntimeError(
+            "Elastic EP scaling is not supported in mini-vLLM (requires Ray)"
         )
 
         # Create new CoreEngine objects for the new engines
@@ -1404,9 +1401,9 @@ class DPLBAsyncMPClient(DPAsyncMPClient):
 
         await asyncio.gather(*reconfig_futures)
 
-        assert isinstance(self.resources.engine_manager, CoreEngineActorManager)
-        self.resources.engine_manager.scale_down_elastic_ep(
-            cur_data_parallel_size, new_data_parallel_size
+        # mini-vLLM: CoreEngineActorManager removed (Ray support removed)
+        raise RuntimeError(
+            "Elastic EP scaling is not supported in mini-vLLM (requires Ray)"
         )
 
         self._ensure_stats_update_task()

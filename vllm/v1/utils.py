@@ -32,7 +32,8 @@ if TYPE_CHECKING:
     import numpy as np
 
     from vllm.v1.engine.coordinator import DPCoordinator
-    from vllm.v1.engine.utils import CoreEngineActorManager, CoreEngineProcManager
+    from vllm.v1.engine.utils import CoreEngineProcManager
+    # mini-vLLM: CoreEngineActorManager removed (Ray support removed)
 
 logger = init_logger(__name__)
 
@@ -225,8 +226,7 @@ class APIServerProcessManager:
 
 def wait_for_completion_or_failure(
     api_server_manager: APIServerProcessManager,
-    engine_manager: Union["CoreEngineProcManager", "CoreEngineActorManager"]
-    | None = None,
+    engine_manager: "CoreEngineProcManager | None" = None,  # mini-vLLM: CoreEngineActorManager removed
     coordinator: Optional["DPCoordinator"] = None,
 ) -> None:
     """Wait for all processes to complete or detect if any fail.
@@ -235,13 +235,11 @@ def wait_for_completion_or_failure(
 
     Args:
         api_server_manager: The manager for API servers.
-        engine_manager: The manager for engine processes.
-            If CoreEngineProcManager, it manages local engines;
-            if CoreEngineActorManager, it manages all engines.
+        engine_manager: The manager for engine processes (CoreEngineProcManager).
         coordinator: The coordinator for data parallel.
     """
-
-    from vllm.v1.engine.utils import CoreEngineActorManager, CoreEngineProcManager
+    # mini-vLLM: CoreEngineActorManager removed (Ray support removed)
+    from vllm.v1.engine.utils import CoreEngineProcManager
 
     try:
         logger.info("Waiting for API servers to complete ...")
@@ -258,8 +256,6 @@ def wait_for_completion_or_failure(
         if isinstance(engine_manager, CoreEngineProcManager):
             for proc in engine_manager.processes:
                 sentinel_to_proc[proc.sentinel] = proc
-        elif isinstance(engine_manager, CoreEngineActorManager):
-            actor_run_refs = engine_manager.get_run_refs()
 
         # Check if any process terminates
         while sentinel_to_proc or actor_run_refs:

@@ -56,9 +56,8 @@ class Executor(ABC):
                 )
             executor_class = distributed_executor_backend
         elif distributed_executor_backend == "ray":
-            from vllm.v1.executor.ray_executor import RayDistributedExecutor
-
-            executor_class = RayDistributedExecutor
+            # mini-vLLM: Ray support removed
+            raise ValueError("Ray executor is not supported in mini-vLLM")
         elif distributed_executor_backend == "mp":
             from vllm.v1.executor.multiproc_executor import MultiprocExecutor
 
