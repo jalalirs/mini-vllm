@@ -27,15 +27,7 @@ from vllm.entrypoints.openai.protocol import (
 )
 from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
 from vllm.entrypoints.openai.serving_models import BaseModelPath, OpenAIServingModels
-from vllm.entrypoints.pooling.embed.protocol import EmbeddingRequest, EmbeddingResponse
-from vllm.entrypoints.pooling.embed.serving import OpenAIServingEmbedding
-from vllm.entrypoints.pooling.score.protocol import (
-    RerankRequest,
-    RerankResponse,
-    ScoreRequest,
-    ScoreResponse,
-)
-from vllm.entrypoints.pooling.score.serving import ServingScores
+# mini-vLLM: pooling/embedding/score imports removed
 from vllm.logger import init_logger
 from vllm.reasoning import ReasoningParserManager
 from vllm.utils import random_uuid
@@ -45,9 +37,8 @@ from vllm.version import __version__ as VLLM_VERSION
 logger = init_logger(__name__)
 
 
-BatchRequestInputBody: TypeAlias = (
-    ChatCompletionRequest | EmbeddingRequest | ScoreRequest | RerankRequest
-)
+# mini-vLLM: Only chat completions supported in batch
+BatchRequestInputBody: TypeAlias = ChatCompletionRequest
 
 
 class BatchRequestInput(OpenAIBaseModel):
@@ -75,17 +66,11 @@ class BatchRequestInput(OpenAIBaseModel):
     @field_validator("body", mode="plain")
     @classmethod
     def check_type_for_url(cls, value: Any, info: ValidationInfo):
-        # Use url to disambiguate models
+        # mini-vLLM: Only chat completions supported
         url: str = info.data["url"]
         if url == "/v1/chat/completions":
             return ChatCompletionRequest.model_validate(value)
-        if url == "/v1/embeddings":
-            return TypeAdapter(EmbeddingRequest).validate_python(value)
-        if url.endswith("/score"):
-            return ScoreRequest.model_validate(value)
-        if url.endswith("/rerank"):
-            return RerankRequest.model_validate(value)
-        return TypeAdapter(BatchRequestInputBody).validate_python(value)
+        raise ValueError(f"Unsupported URL in mini-vLLM batch: {url}")
 
 
 class BatchResponseData(OpenAIBaseModel):
@@ -96,13 +81,8 @@ class BatchResponseData(OpenAIBaseModel):
     request_id: str
 
     # The body of the response.
-    body: (
-        ChatCompletionResponse
-        | EmbeddingResponse
-        | ScoreResponse
-        | RerankResponse
-        | None
-    ) = None
+    # mini-vLLM: Only chat completions supported
+    body: ChatCompletionResponse | None = None
 
 
 class BatchRequestOutput(OpenAIBaseModel):
@@ -386,10 +366,8 @@ async def run_request(
 ) -> BatchRequestOutput:
     response = await serving_engine_func(request.body)
 
-    if isinstance(
-        response,
-        (ChatCompletionResponse, EmbeddingResponse, ScoreResponse, RerankResponse),
-    ):
+    # mini-vLLM: Only ChatCompletionResponse supported
+    if isinstance(response, ChatCompletionResponse):
         batch_output = BatchRequestOutput(
             id=f"vllm-{random_uuid()}",
             custom_id=request.custom_id,
@@ -473,33 +451,7 @@ async def run_batch(
         else None
     )
 
-    openai_serving_embedding = (
-        OpenAIServingEmbedding(
-            engine_client,
-            openai_serving_models,
-            request_logger=request_logger,
-            chat_template=None,
-            chat_template_content_format="auto",
-        )
-        if "embed" in supported_tasks
-        else None
-    )
-
-    enable_serving_reranking = (
-        "classify" in supported_tasks
-        and getattr(model_config.hf_config, "num_labels", 0) == 1
-    )
-
-    openai_serving_scores = (
-        ServingScores(
-            engine_client,
-            openai_serving_models,
-            request_logger=request_logger,
-            score_template=None,
-        )
-        if ("embed" in supported_tasks or enable_serving_reranking)
-        else None
-    )
+    # mini-vLLM: embedding and score serving removed
 
     tracker = BatchProgressTracker()
     logger.info("Reading batch from %s...", args.input_file)
@@ -532,66 +484,13 @@ async def run_batch(
 
             response_futures.append(run_request(chat_handler_fn, request, tracker))
             tracker.submitted()
-        elif request.url == "/v1/embeddings":
-            embed_handler_fn = (
-                openai_serving_embedding.create_embedding
-                if openai_serving_embedding is not None
-                else None
-            )
-            if embed_handler_fn is None:
-                response_futures.append(
-                    make_async_error_request_output(
-                        request,
-                        error_msg="The model does not support Embeddings API",
-                    )
-                )
-                continue
-
-            response_futures.append(run_request(embed_handler_fn, request, tracker))
-            tracker.submitted()
-        elif request.url.endswith("/score"):
-            score_handler_fn = (
-                openai_serving_scores.create_score
-                if openai_serving_scores is not None
-                else None
-            )
-            if score_handler_fn is None:
-                response_futures.append(
-                    make_async_error_request_output(
-                        request,
-                        error_msg="The model does not support Scores API",
-                    )
-                )
-                continue
-
-            response_futures.append(run_request(score_handler_fn, request, tracker))
-            tracker.submitted()
-        elif request.url.endswith("/rerank"):
-            rerank_handler_fn = (
-                openai_serving_scores.do_rerank
-                if openai_serving_scores is not None
-                else None
-            )
-            if rerank_handler_fn is None:
-                response_futures.append(
-                    make_async_error_request_output(
-                        request,
-                        error_msg="The model does not support Rerank API",
-                    )
-                )
-                continue
-
-            response_futures.append(run_request(rerank_handler_fn, request, tracker))
-            tracker.submitted()
         else:
+            # mini-vLLM: Only chat completions supported
             response_futures.append(
                 make_async_error_request_output(
                     request,
-                    error_msg=f"URL {request.url} was used. "
-                    "Supported endpoints: /v1/chat/completions, /v1/embeddings,"
-                    " /score, /rerank ."
-                    "See vllm/entrypoints/openai/api_server.py for supported "
-                    "score/rerank versions.",
+                    error_msg=f"URL {request.url} not supported. "
+                    "mini-vLLM only supports /v1/chat/completions.",
                 )
             )
 

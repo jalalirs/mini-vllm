@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import Any
 
-import model_hosting_container_standards.sagemaker as sagemaker_standards
+# mini-vLLM: sagemaker support removed
 import pydantic
 import uvloop
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -33,13 +33,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 import vllm.envs as envs
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.engine.protocol import EngineClient
-from vllm.entrypoints.anthropic.protocol import (
-    AnthropicError,
-    AnthropicErrorResponse,
-    AnthropicMessagesRequest,
-    AnthropicMessagesResponse,
-)
-from vllm.entrypoints.anthropic.serving_messages import AnthropicServingMessages
+# mini-vLLM: Anthropic entrypoint removed
 from vllm.entrypoints.launcher import serve_http
 from vllm.entrypoints.logger import RequestLogger
 from vllm.entrypoints.openai.cli_args import make_arg_parser, validate_parsed_serve_args
@@ -233,8 +227,7 @@ def responses(request: Request) -> OpenAIServingResponses | None:
     return request.app.state.openai_serving_responses
 
 
-def messages(request: Request) -> AnthropicServingMessages:
-    return request.app.state.anthropic_serving_messages
+# mini-vLLM: Anthropic messages() removed
 
 
 def chat(request: Request) -> OpenAIServingChat | None:
@@ -394,62 +387,6 @@ async def cancel_responses(response_id: str, raw_request: Request):
             content=response.model_dump(), status_code=response.error.code
         )
     return JSONResponse(content=response.model_dump())
-
-
-@router.post(
-    "/v1/messages",
-    dependencies=[Depends(validate_json_request)],
-    responses={
-        HTTPStatus.OK.value: {"content": {"text/event-stream": {}}},
-        HTTPStatus.BAD_REQUEST.value: {"model": AnthropicErrorResponse},
-        HTTPStatus.NOT_FOUND.value: {"model": AnthropicErrorResponse},
-        HTTPStatus.INTERNAL_SERVER_ERROR.value: {"model": AnthropicErrorResponse},
-    },
-)
-@with_cancellation
-@load_aware_call
-async def create_messages(request: AnthropicMessagesRequest, raw_request: Request):
-    def translate_error_response(response: ErrorResponse) -> JSONResponse:
-        anthropic_error = AnthropicErrorResponse(
-            error=AnthropicError(
-                type=response.error.type,
-                message=response.error.message,
-            )
-        )
-        return JSONResponse(
-            status_code=response.error.code, content=anthropic_error.model_dump()
-        )
-
-    handler = messages(raw_request)
-    if handler is None:
-        error = base(raw_request).create_error_response(
-            message="The model does not support Messages API"
-        )
-        return translate_error_response(error)
-
-    try:
-        generator = await handler.create_messages(request, raw_request)
-    except Exception as e:
-        logger.exception("Error in create_messages: %s", e)
-        return JSONResponse(
-            status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
-            content=AnthropicErrorResponse(
-                error=AnthropicError(
-                    type="internal_error",
-                    message=str(e),
-                )
-            ).model_dump(),
-        )
-
-    if isinstance(generator, ErrorResponse):
-        return translate_error_response(generator)
-
-    elif isinstance(generator, AnthropicMessagesResponse):
-        resp = generator.model_dump(exclude_none=True)
-        logger.debug("Anthropic Messages Response: %s", resp)
-        return JSONResponse(content=resp)
-
-    return StreamingResponse(content=generator, media_type="text/event-stream")
 
 
 @router.post(
@@ -781,9 +718,7 @@ def build_app(args: Namespace) -> FastAPI:
 
     register_vllm_serve_api_routers(app)
 
-    from vllm.entrypoints.sagemaker.routes import register_sagemaker_routes
-
-    register_sagemaker_routes(router)
+    # mini-vLLM: sagemaker routes removed
     app.include_router(router)
 
     app.root_path = args.root_path
@@ -886,7 +821,7 @@ def build_app(args: Namespace) -> FastAPI:
                 f"Invalid middleware {middleware}. Must be a function or a class."
             )
 
-    app = sagemaker_standards.bootstrap(app)
+    # mini-vLLM: sagemaker_standards.bootstrap removed
 
     return app
 
@@ -1021,24 +956,7 @@ async def init_app_state(
         trust_request_chat_template=args.trust_request_chat_template,
         log_error_stack=args.log_error_stack,
     )
-    state.anthropic_serving_messages = (
-        AnthropicServingMessages(
-            engine_client,
-            state.openai_serving_models,
-            args.response_role,
-            request_logger=request_logger,
-            chat_template=resolved_chat_template,
-            chat_template_content_format=args.chat_template_content_format,
-            return_tokens_as_token_ids=args.return_tokens_as_token_ids,
-            enable_auto_tools=args.enable_auto_tool_choice,
-            tool_parser=args.tool_call_parser,
-            reasoning_parser=args.structured_outputs_config.reasoning_parser,
-            enable_prompt_tokens_details=args.enable_prompt_tokens_details,
-            enable_force_include_usage=args.enable_force_include_usage,
-        )
-        if "generate" in supported_tasks
-        else None
-    )
+    # mini-vLLM: anthropic_serving_messages removed
     state.serving_tokens = (
         ServingTokens(
             engine_client,

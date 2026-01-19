@@ -60,27 +60,7 @@ from vllm.entrypoints.openai.protocol import (
     VLLMValidationError,
 )
 from vllm.entrypoints.openai.serving_models import OpenAIServingModels
-from vllm.entrypoints.pooling.classify.protocol import (
-    ClassificationChatRequest,
-    ClassificationCompletionRequest,
-    ClassificationRequest,
-    ClassificationResponse,
-)
-from vllm.entrypoints.pooling.embed.protocol import (
-    EmbeddingChatRequest,
-    EmbeddingCompletionRequest,
-    EmbeddingRequest,
-    EmbeddingResponse,
-)
-from vllm.entrypoints.pooling.pooling.protocol import (
-    IOProcessorRequest,
-    PoolingResponse,
-)
-from vllm.entrypoints.pooling.score.protocol import (
-    RerankRequest,
-    ScoreRequest,
-    ScoreResponse,
-)
+# mini-vLLM: pooling imports removed
 from vllm.entrypoints.renderer import BaseRenderer, CompletionRenderer, RenderConfig
 from vllm.entrypoints.responses_utils import (
     construct_input_messages,
@@ -97,8 +77,8 @@ from vllm.logger import init_logger
 from vllm.logprobs import Logprob, PromptLogprobs
 from vllm.lora.request import LoRARequest
 from vllm.multimodal import MultiModalDataDict
-from vllm.outputs import CompletionOutput, PoolingRequestOutput, RequestOutput
-from vllm.pooling_params import PoolingParams
+from vllm.outputs import CompletionOutput, RequestOutput
+# mini-vLLM: PoolingParams removed
 from vllm.reasoning import ReasoningParser, ReasoningParserManager
 from vllm.sampling_params import BeamSearchParams, SamplingParams
 from vllm.tokenizers import TokenizerLike
@@ -131,41 +111,29 @@ class GenerationError(Exception):
 
 logger = init_logger(__name__)
 
+# mini-vLLM: Simplified type aliases (pooling/embedding/classification removed)
 CompletionLikeRequest: TypeAlias = (
     CompletionRequest
     | DetokenizeRequest
-    | EmbeddingCompletionRequest
-    | RerankRequest
-    | ClassificationCompletionRequest
-    | ScoreRequest
     | TokenizeCompletionRequest
 )
 
 ChatLikeRequest: TypeAlias = (
     ChatCompletionRequest
-    | EmbeddingChatRequest
     | TokenizeChatRequest
-    | ClassificationChatRequest
 )
-SpeechToTextRequest: TypeAlias = TranscriptionRequest | TranslationRequest
+
 AnyRequest: TypeAlias = (
     CompletionLikeRequest
     | ChatLikeRequest
-    | SpeechToTextRequest
     | ResponsesRequest
-    | IOProcessorRequest
     | GenerateRequest
 )
 
 AnyResponse: TypeAlias = (
     CompletionResponse
     | ChatCompletionResponse
-    | EmbeddingResponse
-    | TranscriptionResponse
     | TokenizeResponse
-    | PoolingResponse
-    | ClassificationResponse
-    | ScoreResponse
     | GenerateResponse
 )
 
@@ -191,9 +159,9 @@ class ResponseGenerationMixin:
     """
 
     result_generator: (
-        AsyncGenerator[tuple[int, RequestOutput | PoolingRequestOutput], None] | None
+        AsyncGenerator[tuple[int, RequestOutput], None] | None
     ) = None
-    final_res_batch: list[RequestOutput | PoolingRequestOutput] = field(
+    final_res_batch: list[RequestOutput] = field(
         default_factory=list
     )
 
@@ -214,21 +182,10 @@ class ServeContext(RequestProcessingMixin, ResponseGenerationMixin, Generic[Requ
     tokenizer: TokenizerLike | None = None
 
 
-@dataclass(kw_only=True)
-class ClassificationServeContext(ServeContext[ClassificationRequest]):
-    pass
-
-
-@dataclass(kw_only=True)
-class EmbeddingServeContext(ServeContext[EmbeddingRequest]):
-    chat_template: str | None = None
-    chat_template_content_format: ChatTemplateContentFormatOption
-
-
 class OpenAIServing:
     request_id_prefix: ClassVar[str] = """
     A short string prepended to every request’s ID (e.g. "embd", "classify")
-    so you can easily tell “this ID came from Embedding vs Classification.”
+    so you can easily tell the source of requests.
     """
 
     def __init__(
@@ -599,148 +556,7 @@ class OpenAIServing:
         """
         return self.create_error_response("unimplemented endpoint")
 
-    async def handle(
-        self,
-        ctx: ServeContext,
-    ) -> AnyResponse | ErrorResponse:
-        generation: AsyncGenerator[AnyResponse | ErrorResponse, None]
-        generation = self._pipeline(ctx)
-
-        async for response in generation:
-            return response
-
-        return self.create_error_response("No response yielded from pipeline")
-
-    async def _pipeline(
-        self,
-        ctx: ServeContext,
-    ) -> AsyncGenerator[AnyResponse | ErrorResponse, None]:
-        """Execute the request processing pipeline yielding responses."""
-        if error := await self._check_model(ctx.request):
-            yield error
-        if error := self._validate_request(ctx):
-            yield error
-
-        preprocess_ret = await self._preprocess(ctx)
-        if isinstance(preprocess_ret, ErrorResponse):
-            yield preprocess_ret
-
-        generators_ret = await self._prepare_generators(ctx)
-        if isinstance(generators_ret, ErrorResponse):
-            yield generators_ret
-
-        collect_ret = await self._collect_batch(ctx)
-        if isinstance(collect_ret, ErrorResponse):
-            yield collect_ret
-
-        yield self._build_response(ctx)
-
-    def _validate_request(self, ctx: ServeContext) -> ErrorResponse | None:
-        truncate_prompt_tokens = getattr(ctx.request, "truncate_prompt_tokens", None)
-
-        if (
-            truncate_prompt_tokens is not None
-            and truncate_prompt_tokens > self.max_model_len
-        ):
-            return self.create_error_response(
-                "truncate_prompt_tokens value is "
-                "greater than max_model_len."
-                " Please, select a smaller truncation size."
-            )
-        return None
-
-    def _create_pooling_params(
-        self,
-        ctx: ServeContext,
-    ) -> PoolingParams | ErrorResponse:
-        if not hasattr(ctx.request, "to_pooling_params"):
-            return self.create_error_response(
-                "Request type does not support pooling parameters"
-            )
-
-        return ctx.request.to_pooling_params()
-
-    async def _prepare_generators(
-        self,
-        ctx: ServeContext,
-    ) -> ErrorResponse | None:
-        """Schedule the request and get the result generator."""
-        generators: list[
-            AsyncGenerator[RequestOutput | PoolingRequestOutput, None]
-        ] = []
-
-        try:
-            trace_headers = (
-                None
-                if ctx.raw_request is None
-                else await self._get_trace_headers(ctx.raw_request.headers)
-            )
-
-            pooling_params = self._create_pooling_params(ctx)
-            if isinstance(pooling_params, ErrorResponse):
-                return pooling_params
-
-            if ctx.engine_prompts is None:
-                return self.create_error_response("Engine prompts not available")
-
-            for i, engine_prompt in enumerate(ctx.engine_prompts):
-                request_id_item = f"{ctx.request_id}-{i}"
-
-                self._log_inputs(
-                    request_id_item,
-                    engine_prompt,
-                    params=pooling_params,
-                    lora_request=ctx.lora_request,
-                )
-
-                generator = self.engine_client.encode(
-                    engine_prompt,
-                    pooling_params,
-                    request_id_item,
-                    lora_request=ctx.lora_request,
-                    trace_headers=trace_headers,
-                    priority=getattr(ctx.request, "priority", 0),
-                )
-
-                generators.append(generator)
-
-            ctx.result_generator = merge_async_iterators(*generators)
-
-            return None
-
-        except Exception as e:
-            return self.create_error_response(e)
-
-    async def _collect_batch(
-        self,
-        ctx: ServeContext,
-    ) -> ErrorResponse | None:
-        """Collect batch results from the result generator."""
-        try:
-            if ctx.engine_prompts is None:
-                return self.create_error_response("Engine prompts not available")
-
-            num_prompts = len(ctx.engine_prompts)
-            final_res_batch: list[RequestOutput | PoolingRequestOutput | None]
-            final_res_batch = [None] * num_prompts
-
-            if ctx.result_generator is None:
-                return self.create_error_response("Result generator not available")
-
-            async for i, res in ctx.result_generator:
-                final_res_batch[i] = res
-
-            if None in final_res_batch:
-                return self.create_error_response(
-                    "Failed to generate results for all prompts"
-                )
-
-            ctx.final_res_batch = [res for res in final_res_batch if res is not None]
-
-            return None
-
-        except Exception as e:
-            return self.create_error_response(e)
+    # mini-vLLM: pooling pipeline methods removed (handle, _pipeline, _validate_request, _create_pooling_params, _prepare_generators, _collect_batch)
 
     def create_error_response(
         self,
@@ -1010,37 +826,7 @@ class OpenAIServing:
     ) -> TokensPrompt:
         token_num = len(input_ids)
 
-        # Note: EmbeddingRequest, ClassificationRequest,
-        # and ScoreRequest doesn't have max_tokens
-        if isinstance(
-            request,
-            (
-                EmbeddingChatRequest,
-                EmbeddingCompletionRequest,
-                ScoreRequest,
-                RerankRequest,
-                ClassificationCompletionRequest,
-                ClassificationChatRequest,
-            ),
-        ):
-            # Note: input length can be up to the entire model context length
-            # since these requests don't generate tokens.
-            if token_num > self.max_model_len:
-                operations: dict[type[AnyRequest], str] = {
-                    ScoreRequest: "score",
-                    ClassificationCompletionRequest: "classification",
-                    ClassificationChatRequest: "classification",
-                }
-                operation = operations.get(type(request), "embedding generation")
-                raise VLLMValidationError(
-                    f"This model's maximum context length is "
-                    f"{self.max_model_len} tokens. However, you requested "
-                    f"{token_num} tokens in the input for {operation}. "
-                    f"Please reduce the length of the input.",
-                    parameter="input_tokens",
-                    value=token_num,
-                )
-            return TokensPrompt(prompt=input_text, prompt_token_ids=input_ids)
+        # mini-vLLM: Embedding/Classification/Score request handling removed
 
         # Note: TokenizeRequest and DetokenizeRequest doesn't have max_tokens
         # and does not require model context length validation
@@ -1273,7 +1059,7 @@ class OpenAIServing:
         self,
         request_id: str,
         engine_prompt: PromptType,
-        params: SamplingParams | PoolingParams,
+        params: SamplingParams,
         *,
         lora_request: LoRARequest | None,
         trace_headers: Mapping[str, str] | None,
@@ -1416,7 +1202,7 @@ class OpenAIServing:
         self,
         request_id: str,
         inputs: PromptType,
-        params: SamplingParams | PoolingParams | BeamSearchParams | None,
+        params: SamplingParams | BeamSearchParams | None,
         lora_request: LoRARequest | None,
     ) -> None:
         if self.request_logger is None:
