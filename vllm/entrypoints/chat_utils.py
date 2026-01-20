@@ -48,9 +48,13 @@ from vllm import envs
 from vllm.config import ModelConfig
 from vllm.logger import init_logger
 from vllm.model_executor.models import SupportsMultiModal
-from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalDataDict, MultiModalUUIDDict
-from vllm.multimodal.utils import MEDIA_CONNECTOR_REGISTRY, MediaConnector
 from vllm.tokenizers import TokenizerLike
+
+# mini-vLLM: multimodal support removed (text-only)
+# Type aliases for compatibility - multimodal data will always be None
+MultiModalDataDict: TypeAlias = dict[str, Any]
+MultiModalUUIDDict: TypeAlias = dict[str, Any]
+
 from vllm.transformers_utils.chat_templates import get_chat_template_fallback_path
 from vllm.transformers_utils.processor import cached_get_processor
 from vllm.utils import random_uuid
@@ -683,47 +687,20 @@ def _get_embeds_data(items_by_modality: dict[str, list[Any]], modality: str):
     return embeds
 
 
+# mini-vLLM: simplified multimodal tracker for text-only mode
 class BaseMultiModalItemTracker(ABC, Generic[_T]):
     """
-    Tracks multi-modal items in a given request and ensures that the number
-    of multi-modal items in a given request does not exceed the configured
-    maximum per prompt.
+    mini-vLLM: Simplified tracker that raises errors for multimodal content.
+    Text-only mode - no multimodal support.
     """
 
     def __init__(self, model_config: ModelConfig):
         super().__init__()
-
         self._model_config = model_config
-
-        self._items_by_modality = defaultdict[str, list[_T | None]](list)
-        self._uuids_by_modality = defaultdict[str, list[str | None]](list)
 
     @property
     def model_config(self) -> ModelConfig:
         return self._model_config
-
-    @cached_property
-    def model_cls(self) -> type[SupportsMultiModal]:
-        from vllm.model_executor.model_loader import get_model_cls
-
-        model_cls = get_model_cls(self.model_config)
-        return cast(type[SupportsMultiModal], model_cls)
-
-    @property
-    def allowed_local_media_path(self):
-        return self._model_config.allowed_local_media_path
-
-    @property
-    def allowed_media_domains(self):
-        return self._model_config.allowed_media_domains
-
-    @property
-    def mm_registry(self):
-        return MULTIMODAL_REGISTRY
-
-    @cached_property
-    def mm_processor(self):
-        return self.mm_registry.create_processor(self.model_config)
 
     def add(
         self,
@@ -731,46 +708,15 @@ class BaseMultiModalItemTracker(ABC, Generic[_T]):
         item: _T | None,
         uuid: str | None = None,
     ) -> str | None:
-        """
-        Add a multi-modal item to the current prompt and returns the
-        placeholder string to use, if any.
-
-        An optional uuid can be added which serves as a unique identifier of the
-        media.
-        """
-        input_modality = modality.replace("_embeds", "")
-        num_items = len(self._items_by_modality[modality]) + 1
-
-        self.mm_processor.validate_num_items(input_modality, num_items)
-
-        self._items_by_modality[modality].append(item)
-        self._uuids_by_modality[modality].append(uuid)
-
-        return self.model_cls.get_placeholder_str(modality, num_items)
+        # mini-vLLM: multimodal not supported
+        raise ValueError(
+            f"mini-vLLM: Multimodal content ({modality}) not supported. "
+            "This is a text-only build."
+        )
 
     def all_mm_uuids(self) -> MultiModalUUIDDict | None:
-        if not self._items_by_modality:
-            return None
-
-        uuids_by_modality = dict(self._uuids_by_modality)
-        if "image" in uuids_by_modality and "image_embeds" in uuids_by_modality:
-            raise ValueError("Mixing raw image and embedding inputs is not allowed")
-        if "audio" in uuids_by_modality and "audio_embeds" in uuids_by_modality:
-            raise ValueError("Mixing raw audio and embedding inputs is not allowed")
-
-        mm_uuids = {}
-        if "image_embeds" in uuids_by_modality:
-            mm_uuids["image"] = uuids_by_modality["image_embeds"]
-        if "image" in uuids_by_modality:
-            mm_uuids["image"] = uuids_by_modality["image"]  # UUIDs of images
-        if "audio_embeds" in uuids_by_modality:
-            mm_uuids["audio"] = uuids_by_modality["audio_embeds"]
-        if "audio" in uuids_by_modality:
-            mm_uuids["audio"] = uuids_by_modality["audio"]  # UUIDs of audios
-        if "video" in uuids_by_modality:
-            mm_uuids["video"] = uuids_by_modality["video"]  # UUIDs of videos
-
-        return mm_uuids
+        # mini-vLLM: no multimodal items tracked
+        return None
 
     @abstractmethod
     def create_parser(self) -> "BaseMultiModalContentParser":
@@ -778,65 +724,18 @@ class BaseMultiModalItemTracker(ABC, Generic[_T]):
 
 
 class MultiModalItemTracker(BaseMultiModalItemTracker[object]):
+    # mini-vLLM: simplified for text-only
     def all_mm_data(self) -> MultiModalDataDict | None:
-        if not self._items_by_modality:
-            return None
-
-        items_by_modality = dict(self._items_by_modality)
-        if "image" in items_by_modality and "image_embeds" in items_by_modality:
-            raise ValueError("Mixing raw image and embedding inputs is not allowed")
-        if "audio" in items_by_modality and "audio_embeds" in items_by_modality:
-            raise ValueError("Mixing raw audio and embedding inputs is not allowed")
-
-        mm_inputs = {}
-        if "image_embeds" in items_by_modality:
-            mm_inputs["image"] = _get_embeds_data(items_by_modality, "image")
-        if "image" in items_by_modality:
-            mm_inputs["image"] = items_by_modality["image"]  # A list of images
-        if "audio_embeds" in items_by_modality:
-            mm_inputs["audio"] = _get_embeds_data(items_by_modality, "audio")
-        if "audio" in items_by_modality:
-            mm_inputs["audio"] = items_by_modality["audio"]  # A list of audios
-        if "video" in items_by_modality:
-            mm_inputs["video"] = items_by_modality["video"]  # A list of videos
-
-        return mm_inputs
+        return None  # No multimodal data in text-only mode
 
     def create_parser(self) -> "BaseMultiModalContentParser":
         return MultiModalContentParser(self)
 
 
 class AsyncMultiModalItemTracker(BaseMultiModalItemTracker[Awaitable[object]]):
+    # mini-vLLM: simplified for text-only
     async def all_mm_data(self) -> MultiModalDataDict | None:
-        if not self._items_by_modality:
-            return None
-
-        coros_by_modality = {
-            modality: [item or asyncio.sleep(0) for item in items]
-            for modality, items in self._items_by_modality.items()
-        }
-        items_by_modality: dict[str, list[object | None]] = {
-            modality: await asyncio.gather(*coros)
-            for modality, coros in coros_by_modality.items()
-        }
-        if "image" in items_by_modality and "image_embeds" in items_by_modality:
-            raise ValueError("Mixing raw image and embedding inputs is not allowed")
-        if "audio" in items_by_modality and "audio_embeds" in items_by_modality:
-            raise ValueError("Mixing raw audio and embedding inputs is not allowed")
-
-        mm_inputs = {}
-        if "image_embeds" in items_by_modality:
-            mm_inputs["image"] = _get_embeds_data(items_by_modality, "image")
-        if "image" in items_by_modality:
-            mm_inputs["image"] = items_by_modality["image"]  # A list of images
-        if "audio_embeds" in items_by_modality:
-            mm_inputs["audio"] = _get_embeds_data(items_by_modality, "audio")
-        if "audio" in items_by_modality:
-            mm_inputs["audio"] = items_by_modality["audio"]  # A list of audios
-        if "video" in items_by_modality:
-            mm_inputs["video"] = items_by_modality["video"]  # A list of videos
-
-        return mm_inputs
+        return None  # No multimodal data in text-only mode
 
     def create_parser(self) -> "BaseMultiModalContentParser":
         return AsyncMultiModalContentParser(self)
@@ -903,276 +802,93 @@ class BaseMultiModalContentParser(ABC):
         raise NotImplementedError
 
 
+# mini-vLLM: simplified content parser for text-only mode
 class MultiModalContentParser(BaseMultiModalContentParser):
     def __init__(self, tracker: MultiModalItemTracker) -> None:
         super().__init__()
-
         self._tracker = tracker
-        multimodal_config = self._tracker.model_config.multimodal_config
-        media_io_kwargs = getattr(multimodal_config, "media_io_kwargs", None)
-
-        self._connector: MediaConnector = MEDIA_CONNECTOR_REGISTRY.load(
-            envs.VLLM_MEDIA_CONNECTOR,
-            media_io_kwargs=media_io_kwargs,
-            allowed_local_media_path=tracker.allowed_local_media_path,
-            allowed_media_domains=tracker.allowed_media_domains,
-        )
 
     @property
     def model_config(self) -> ModelConfig:
         return self._tracker.model_config
 
     def parse_image(self, image_url: str | None, uuid: str | None = None) -> None:
-        image = self._connector.fetch_image(image_url) if image_url else None
-
-        placeholder = self._tracker.add("image", image, uuid)
-        self._add_placeholder("image", placeholder)
+        # Will raise error via tracker.add()
+        self._tracker.add("image", None, uuid)
 
     def parse_image_embeds(
         self,
         image_embeds: str | dict[str, str] | None,
         uuid: str | None = None,
     ) -> None:
-        mm_config = self.model_config.get_multimodal_config()
-        if not mm_config.enable_mm_embeds:
-            raise ValueError(
-                "You must set `--enable-mm-embeds` to input `image_embeds`"
-            )
-
-        if isinstance(image_embeds, dict):
-            embeds = {
-                k: self._connector.fetch_image_embedding(v)
-                for k, v in image_embeds.items()
-            }
-            placeholder = self._tracker.add("image_embeds", embeds, uuid)
-
-        if isinstance(image_embeds, str):
-            embedding = self._connector.fetch_image_embedding(image_embeds)
-            placeholder = self._tracker.add("image_embeds", embedding, uuid)
-
-        if image_embeds is None:
-            placeholder = self._tracker.add("image_embeds", None, uuid)
-
-        self._add_placeholder("image", placeholder)
+        self._tracker.add("image_embeds", None, uuid)
 
     def parse_audio_embeds(
         self,
         audio_embeds: str | dict[str, str] | None,
         uuid: str | None = None,
     ) -> None:
-        mm_config = self.model_config.get_multimodal_config()
-        if not mm_config.enable_mm_embeds:
-            raise ValueError(
-                "You must set `--enable-mm-embeds` to input `audio_embeds`"
-            )
-
-        if isinstance(audio_embeds, dict):
-            embeds = {
-                k: self._connector.fetch_audio_embedding(v)
-                for k, v in audio_embeds.items()
-            }
-            placeholder = self._tracker.add("audio_embeds", embeds, uuid)
-        elif isinstance(audio_embeds, str):
-            embedding = self._connector.fetch_audio_embedding(audio_embeds)
-            placeholder = self._tracker.add("audio_embeds", embedding, uuid)
-        else:
-            placeholder = self._tracker.add("audio_embeds", None, uuid)
-
-        self._add_placeholder("audio", placeholder)
+        self._tracker.add("audio_embeds", None, uuid)
 
     def parse_image_pil(
         self, image_pil: Image.Image | None, uuid: str | None = None
     ) -> None:
-        placeholder = self._tracker.add("image", image_pil, uuid)
-        self._add_placeholder("image", placeholder)
+        self._tracker.add("image", None, uuid)
 
     def parse_audio(self, audio_url: str | None, uuid: str | None = None) -> None:
-        audio = self._connector.fetch_audio(audio_url) if audio_url else None
-
-        placeholder = self._tracker.add("audio", audio, uuid)
-        self._add_placeholder("audio", placeholder)
+        self._tracker.add("audio", None, uuid)
 
     def parse_input_audio(
         self, input_audio: InputAudio | None, uuid: str | None = None
     ) -> None:
-        if input_audio:
-            audio_data = input_audio.get("data", "")
-            audio_format = input_audio.get("format", "")
-            if audio_data:
-                audio_url = f"data:audio/{audio_format};base64,{audio_data}"
-            else:
-                # If a UUID is provided, audio data may be empty.
-                audio_url = None
-        else:
-            audio_url = None
-
-        return self.parse_audio(audio_url, uuid)
+        self._tracker.add("audio", None, uuid)
 
     def parse_video(self, video_url: str | None, uuid: str | None = None) -> None:
-        video = self._connector.fetch_video(video_url=video_url) if video_url else None
-
-        placeholder = self._tracker.add("video", video, uuid)
-        self._add_placeholder("video", placeholder)
+        self._tracker.add("video", None, uuid)
 
 
+# mini-vLLM: simplified async content parser for text-only mode
 class AsyncMultiModalContentParser(BaseMultiModalContentParser):
     def __init__(self, tracker: AsyncMultiModalItemTracker) -> None:
         super().__init__()
-
         self._tracker = tracker
-        multimodal_config = self._tracker.model_config.multimodal_config
-        media_io_kwargs = getattr(multimodal_config, "media_io_kwargs", None)
-        self._connector: MediaConnector = MEDIA_CONNECTOR_REGISTRY.load(
-            envs.VLLM_MEDIA_CONNECTOR,
-            media_io_kwargs=media_io_kwargs,
-            allowed_local_media_path=tracker.allowed_local_media_path,
-            allowed_media_domains=tracker.allowed_media_domains,
-        )
 
     @property
     def model_config(self) -> ModelConfig:
         return self._tracker.model_config
 
     def parse_image(self, image_url: str | None, uuid: str | None = None) -> None:
-        image_coro = self._connector.fetch_image_async(image_url) if image_url else None
-
-        placeholder = self._tracker.add("image", image_coro, uuid)
-        self._add_placeholder("image", placeholder)
+        self._tracker.add("image", None, uuid)
 
     def parse_image_embeds(
         self,
         image_embeds: str | dict[str, str] | None,
         uuid: str | None = None,
     ) -> None:
-        mm_config = self.model_config.get_multimodal_config()
-        if not mm_config.enable_mm_embeds:
-            raise ValueError(
-                "You must set `--enable-mm-embeds` to input `image_embeds`"
-            )
-
-        future: asyncio.Future[str | dict[str, str] | None] = asyncio.Future()
-
-        if isinstance(image_embeds, dict):
-            embeds = {
-                k: self._connector.fetch_image_embedding(v)
-                for k, v in image_embeds.items()
-            }
-            future.set_result(embeds)
-
-        if isinstance(image_embeds, str):
-            embedding = self._connector.fetch_image_embedding(image_embeds)
-            future.set_result(embedding)
-
-        if image_embeds is None:
-            future.set_result(None)
-
-        placeholder = self._tracker.add("image_embeds", future, uuid)
-        self._add_placeholder("image", placeholder)
+        self._tracker.add("image_embeds", None, uuid)
 
     def parse_audio_embeds(
         self,
         audio_embeds: str | dict[str, str] | None,
         uuid: str | None = None,
     ) -> None:
-        mm_config = self.model_config.get_multimodal_config()
-        if not mm_config.enable_mm_embeds:
-            raise ValueError(
-                "You must set `--enable-mm-embeds` to input `audio_embeds`"
-            )
-
-        logger.info(
-            "🎵 Parsing audio_embeds: type=%s, uuid=%s, is_dict=%s, "
-            "is_str=%s, is_none=%s",
-            type(audio_embeds).__name__,
-            uuid,
-            isinstance(audio_embeds, dict),
-            isinstance(audio_embeds, str),
-            audio_embeds is None,
-        )
-
-        future: asyncio.Future[str | dict[str, str] | None] = asyncio.Future()
-
-        if isinstance(audio_embeds, dict):
-            logger.info(
-                "🎵 Processing dict audio_embeds with %d entries",
-                len(audio_embeds),
-            )
-            embeds = {
-                k: self._connector.fetch_audio_embedding(v)
-                for k, v in audio_embeds.items()
-            }
-            future.set_result(embeds)
-            logger.info(
-                "🎵 Successfully loaded %d audio embeddings from dict",
-                len(embeds),
-            )
-
-        if isinstance(audio_embeds, str):
-            base64_size = len(audio_embeds)
-            logger.info(
-                "🎵 Processing base64 audio_embeds: %d chars (%.2f KB)",
-                base64_size,
-                base64_size / 1024,
-            )
-            embedding = self._connector.fetch_audio_embedding(audio_embeds)
-            future.set_result(embedding)
-            logger.info(
-                "🎵 Successfully loaded audio embedding tensor: shape=%s, dtype=%s",
-                embedding.shape,
-                embedding.dtype,
-            )
-
-        if audio_embeds is None:
-            logger.info("🎵 Audio embeds is None (UUID-only reference)")
-            future.set_result(None)
-
-        placeholder = self._tracker.add("audio_embeds", future, uuid)
-        self._add_placeholder("audio", placeholder)
-        logger.info("🎵 Added audio_embeds placeholder with uuid=%s", uuid)
+        self._tracker.add("audio_embeds", None, uuid)
 
     def parse_image_pil(
         self, image_pil: Image.Image | None, uuid: str | None = None
     ) -> None:
-        future: asyncio.Future[Image.Image | None] = asyncio.Future()
-        if image_pil:
-            future.set_result(image_pil)
-        else:
-            future.set_result(None)
-
-        placeholder = self._tracker.add("image", future, uuid)
-        self._add_placeholder("image", placeholder)
+        self._tracker.add("image", None, uuid)
 
     def parse_audio(self, audio_url: str | None, uuid: str | None = None) -> None:
-        audio_coro = self._connector.fetch_audio_async(audio_url) if audio_url else None
-
-        placeholder = self._tracker.add("audio", audio_coro, uuid)
-        self._add_placeholder("audio", placeholder)
+        self._tracker.add("audio", None, uuid)
 
     def parse_input_audio(
         self, input_audio: InputAudio | None, uuid: str | None = None
     ) -> None:
-        if input_audio:
-            audio_data = input_audio.get("data", "")
-            audio_format = input_audio.get("format", "")
-            if audio_data:
-                audio_url = f"data:audio/{audio_format};base64,{audio_data}"
-            else:
-                # If a UUID is provided, audio data may be empty.
-                audio_url = None
-        else:
-            audio_url = None
-
-        return self.parse_audio(audio_url, uuid)
+        self._tracker.add("audio", None, uuid)
 
     def parse_video(self, video_url: str | None, uuid: str | None = None) -> None:
-        video = (
-            self._connector.fetch_video_async(video_url=video_url)
-            if video_url
-            else None
-        )
-
-        placeholder = self._tracker.add("video", video, uuid)
-        self._add_placeholder("video", placeholder)
+        self._tracker.add("video", None, uuid)
 
 
 def validate_chat_template(chat_template: Path | str | None):

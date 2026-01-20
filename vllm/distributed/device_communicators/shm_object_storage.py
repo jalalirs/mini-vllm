@@ -338,11 +338,12 @@ class ObjectSerde(ABC):
 class MsgpackSerde(ObjectSerde):
     def __init__(self):
         # Delayed import to avoid circular dependency
-        from vllm.multimodal.inputs import MultiModalKwargsItem
         from vllm.v1.serial_utils import MsgpackDecoder, MsgpackEncoder
 
         self.encoder = MsgpackEncoder()
         self.tensor_decoder = MsgpackDecoder(torch.Tensor, share_mem=False)
+        # mini-vLLM: multimodal support removed, use dict as fallback type
+        MultiModalKwargsItem = dict
         self.mm_decoder = MsgpackDecoder(MultiModalKwargsItem, share_mem=False)
         self._mm_kwargs_item_cls = MultiModalKwargsItem
 

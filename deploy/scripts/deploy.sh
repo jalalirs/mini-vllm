@@ -159,9 +159,45 @@ case "$ACTION" in
         echo ""
         kubectl get pods -n "$MINI_VLLM_NAMESPACE" -l app="$DEPLOYMENT_NAME" -o wide
         ;;
-    
+
+    port-forward)
+        echo "Port forwarding to $DEPLOYMENT_NAME:8000..."
+        kubectl port-forward svc/"$DEPLOYMENT_NAME" 8000:8000 -n "$MINI_VLLM_NAMESPACE"
+        ;;
+
+    test)
+        # Get pod name
+        POD_NAME=$(kubectl get pods -n "$MINI_VLLM_NAMESPACE" -l app="$DEPLOYMENT_NAME" -o jsonpath='{.items[0].metadata.name}')
+        MAX_TOKENS="${3:-100}"
+        echo "Testing with max_tokens=$MAX_TOKENS on pod $POD_NAME..."
+
+        # Run curl inside the pod with timing
+        START_TIME=$(date +%s%3N)
+        RESPONSE=$(kubectl exec -n "$MINI_VLLM_NAMESPACE" "$POD_NAME" -- curl -s http://localhost:8000/v1/completions \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"model\": \"$MINI_VLLM_MODEL_PATH\",
+                \"prompt\": \"Write a detailed explanation of how neural networks work:\",
+                \"max_tokens\": $MAX_TOKENS,
+                \"ignore_eos\": true,
+                \"temperature\": 0.7
+            }")
+        END_TIME=$(date +%s%3N)
+
+        echo "$RESPONSE" | python -m json.tool 2>/dev/null || echo "$RESPONSE"
+        echo ""
+
+        # Calculate throughput using awk
+        ELAPSED_MS=$((END_TIME - START_TIME))
+        THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $MAX_TOKENS / ($ELAPSED_MS / 1000)}")
+        echo "=============================================="
+        echo "Time: ${ELAPSED_MS}ms ($(awk "BEGIN {printf \"%.2f\", $ELAPSED_MS / 1000}")s)"
+        echo "Throughput: ${THROUGHPUT} tokens/sec"
+        echo "=============================================="
+        ;;
+
     *)
-        echo "ERROR: Unknown action. Use: apply, delete, logs, status"
+        echo "ERROR: Unknown action. Use: apply, delete, logs, status, port-forward, test"
         exit 1
         ;;
 esac

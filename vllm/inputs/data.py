@@ -1,21 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# mini-vLLM: multimodal support removed (text-only)
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast
+from typing import Any, Generic, Literal, TypeAlias, cast
 
 import torch
 from typing_extensions import NotRequired, TypedDict, TypeIs, TypeVar
-
-if TYPE_CHECKING:
-    from vllm.multimodal.inputs import (
-        MultiModalDataDict,
-        MultiModalInputs,
-        MultiModalUUIDDict,
-    )
-else:
-    MultiModalDataDict = object
-    MultiModalInputs = object
-    MultiModalUUIDDict = object
 
 
 class TextPrompt(TypedDict):
@@ -24,28 +14,7 @@ class TextPrompt(TypedDict):
     prompt: str
     """The input text to be tokenized before passing to the model."""
 
-    multi_modal_data: NotRequired[MultiModalDataDict | None]
-    """
-    Optional multi-modal data to pass to the model,
-    if the model supports it.
-    """
-
-    mm_processor_kwargs: NotRequired[dict[str, Any] | None]
-    """
-    Optional multi-modal processor kwargs to be forwarded to the
-    multimodal input mapper & processor. Note that if multiple modalities
-    have registered mappers etc for the model being considered, we attempt
-    to pass the mm_processor_kwargs to each of them.
-    """
-
-    multi_modal_uuids: NotRequired[MultiModalUUIDDict]
-    """
-    Optional user-specified UUIDs for multimodal items, mapped by modality.
-    Lists must match the number of items per modality and may contain `None`.
-    For `None` entries, the hasher will compute IDs automatically; non-None
-    entries override the default hashes for caching, and MUST be unique per
-    multimodal item.
-    """
+    # mini-vLLM: multimodal fields removed (text-only)
 
     cache_salt: NotRequired[str]
     """
@@ -65,27 +34,7 @@ class TokensPrompt(TypedDict):
     token_type_ids: NotRequired[list[int]]
     """A list of token type IDs to pass to the cross encoder model."""
 
-    multi_modal_data: NotRequired[MultiModalDataDict | None]
-    """
-    Optional multi-modal data to pass to the model,
-    if the model supports it.
-    """
-
-    mm_processor_kwargs: NotRequired[dict[str, Any] | None]
-    """
-    Optional multi-modal processor kwargs to be forwarded to the
-    multimodal input mapper & processor. Note that if multiple modalities
-    have registered mappers etc for the model being considered, we attempt
-    to pass the mm_processor_kwargs to each of them.
-    """
-
-    multi_modal_uuids: NotRequired[MultiModalUUIDDict]
-    """
-    Optional user-specified UUIDs for multimodal items, mapped by modality.
-    Lists must match the number of items per modality and may contain `None`.
-    For `None` entries, the hasher will compute IDs automatically; non-None
-    entries override the default hashes for caching.
-    """
+    # mini-vLLM: multimodal fields removed (text-only)
 
     cache_salt: NotRequired[str]
     """
@@ -265,7 +214,8 @@ def embeds_inputs(
     return inputs
 
 
-DecoderOnlyInputs: TypeAlias = TokenInputs | EmbedsInputs | MultiModalInputs
+# mini-vLLM: simplified type aliases (multimodal removed)
+DecoderOnlyInputs: TypeAlias = TokenInputs | EmbedsInputs
 """
 The inputs in [`LLMEngine`][vllm.engine.llm_engine.LLMEngine] before they are
 passed to the model executor.
@@ -281,14 +231,14 @@ class EncoderDecoderInputs(TypedDict):
     This specifies the required data for encoder-decoder models.
     """
 
-    encoder: TokenInputs | MultiModalInputs
+    encoder: TokenInputs
     """The inputs for the encoder portion."""
 
-    decoder: TokenInputs | MultiModalInputs
+    decoder: TokenInputs
     """The inputs for the decoder portion."""
 
 
-SingletonInputs: TypeAlias = TokenInputs | EmbedsInputs | MultiModalInputs
+SingletonInputs: TypeAlias = TokenInputs | EmbedsInputs
 """
 A processed [`SingletonPrompt`][vllm.inputs.data.SingletonPrompt] which can be
 passed to [`Sequence`][collections.abc.Sequence].

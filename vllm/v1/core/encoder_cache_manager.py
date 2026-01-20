@@ -3,10 +3,9 @@
 
 from collections import OrderedDict
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from vllm.logger import init_logger
-from vllm.multimodal import MultiModalRegistry
 from vllm.v1.request import Request
 
 if TYPE_CHECKING:
@@ -258,10 +257,12 @@ class EncoderCacheManager:
 def compute_encoder_budget(
     model_config: "ModelConfig",
     scheduler_config: "SchedulerConfig",
-    mm_registry: MultiModalRegistry,
+    mm_registry: Any = None,  # mini-vLLM: ignored for text-only
 ) -> tuple[int, int]:
     """Compute the encoder cache budget based on the model and scheduler
     configurations.
+
+    mini-vLLM: Simplified for text-only models - always returns (0, 0).
 
     Returns:
         - Compute budget for encoder execution, measured in number of tokens
@@ -269,16 +270,7 @@ def compute_encoder_budget(
         - Space budget for encoder cache size, measured in number of tokens
             from the input sequence.
     """
-    if mm_registry.supports_multimodal_inputs(model_config):
-        max_tokens_by_modality = mm_registry.get_max_tokens_per_item_by_modality(
-            model_config
-        )
-
-        return compute_mm_encoder_budget(
-            scheduler_config,
-            max_tokens_by_modality,
-        )
-
+    # mini-vLLM: text-only, no multimodal encoder budget needed
     return compute_text_encoder_budget(scheduler_config)
 
 

@@ -31,7 +31,16 @@ from transformers.image_utils import ImageInput
 from transformers.processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from transformers.tokenization_utils_base import PreTokenizedInput, TextInput
 
-from vllm.multimodal.image import convert_image_mode
+# mini-vLLM: inline helper function (multimodal support removed)
+def convert_image_mode(
+    image: PIL.Image.Image,
+    target_mode: str,
+) -> PIL.Image.Image:
+    """Convert PIL image to target mode."""
+    if image.mode == target_mode:
+        return image
+    return image.convert(target_mode)
+
 
 __all__ = ["OvisProcessor"]
 IGNORE_ID = -100

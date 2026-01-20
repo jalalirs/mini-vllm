@@ -24,7 +24,6 @@ from vllm.distributed.kv_transfer.kv_connector.v1 import (
 from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorMetadata
 from vllm.distributed.kv_transfer.kv_connector.v1.metrics import KVConnectorStats
 from vllm.logger import init_logger
-from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
 from vllm.v1.core.encoder_cache_manager import (
     EncoderCacheManager,
     EncoderDecoderCacheManager,
@@ -64,9 +63,9 @@ class Scheduler(SchedulerInterface):
         kv_cache_config: KVCacheConfig,
         structured_output_manager: StructuredOutputManager,
         block_size: int,
-        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
         include_finished_set: bool = False,
         log_stats: bool = False,
+        **kwargs: Any,  # mini-vLLM: accept and ignore mm_registry
     ) -> None:
         self.vllm_config = vllm_config
         self.scheduler_config = vllm_config.scheduler_config
@@ -173,7 +172,6 @@ class Scheduler(SchedulerInterface):
         encoder_compute_budget, encoder_cache_size = compute_encoder_budget(
             model_config=vllm_config.model_config,
             scheduler_config=vllm_config.scheduler_config,
-            mm_registry=mm_registry,
         )
 
         # NOTE(woosuk): Here, "encoder" includes the vision encoder (and
@@ -191,9 +189,8 @@ class Scheduler(SchedulerInterface):
         # For encoder-decoder models, allocate the maximum number of tokens for Cross
         # Attn blocks, as for Whisper its input is always padded to the maximum length.
         # TODO (NickLucche): Generalize to models with variable-length encoder inputs.
-        self._num_encoder_max_input_tokens = (
-            MULTIMODAL_REGISTRY.get_encdec_max_encoder_len(vllm_config.model_config)
-        )
+        # mini-vLLM: text-only, no encoder-decoder max length needed
+        self._num_encoder_max_input_tokens = 0
 
         speculative_config = vllm_config.speculative_config
         self.use_eagle = False

@@ -17,7 +17,6 @@ from vllm.engine.arg_utils import EngineArgs
 from vllm.inputs import PromptType
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
-from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
 from vllm.outputs import PoolingRequestOutput, RequestOutput
 from vllm.plugins.io_processors import get_io_processor
 from vllm.pooling_params import PoolingParams
@@ -54,9 +53,9 @@ class LLMEngine:
         aggregate_engine_logging: bool = False,
         usage_context: UsageContext = UsageContext.ENGINE_CONTEXT,
         stat_loggers: list[StatLoggerFactory] | None = None,
-        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
         use_cached_outputs: bool = False,
         multiprocess_mode: bool = False,
+        **kwargs: Any,  # mini-vLLM: accept and ignore mm_registry
     ) -> None:
         self.vllm_config = vllm_config
         self.observability_config = vllm_config.observability_config

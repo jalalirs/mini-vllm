@@ -22,8 +22,6 @@ from vllm.envs import enable_envs_cache
 from vllm.logger import init_logger
 from vllm.logging_utils.dump_input import dump_engine_exception
 from vllm.lora.request import LoRARequest
-from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.multimodal.cache import engine_receiver_cache_from_config
 from vllm.tasks import POOLING_TASKS, SupportedTask
 from vllm.transformers_utils.config import maybe_register_config_serialize_by_value
 from vllm.utils.gc_utils import (
@@ -146,10 +144,9 @@ class EngineCore:
         if self.scheduler.connector is not None:  # type: ignore
             self.model_executor.init_kv_output_aggregator(self.scheduler.connector)  # type: ignore
 
-        self.mm_registry = mm_registry = MULTIMODAL_REGISTRY
-        self.mm_receiver_cache = engine_receiver_cache_from_config(
-            vllm_config, mm_registry
-        )
+        # mini-vLLM: multimodal support removed (text-only)
+        self.mm_registry = None
+        self.mm_receiver_cache = None
 
         # If a KV connector is initialized for scheduler, we want to collect
         # handshake metadata from all workers so the connector in the scheduler

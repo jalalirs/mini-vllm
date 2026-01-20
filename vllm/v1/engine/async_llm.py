@@ -20,7 +20,6 @@ from vllm.entrypoints.utils import _validate_truncation_size
 from vllm.inputs import PromptType
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
-from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
 from vllm.outputs import PoolingRequestOutput, RequestOutput
 from vllm.plugins.io_processors import get_io_processor
 from vllm.pooling_params import PoolingParams
@@ -58,7 +57,6 @@ class AsyncLLM(EngineClient):
         executor_class: type[Executor],
         log_stats: bool,
         usage_context: UsageContext = UsageContext.ENGINE_CONTEXT,
-        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
         use_cached_outputs: bool = False,
         log_requests: bool = True,
         start_engine_loop: bool = True,
@@ -67,6 +65,7 @@ class AsyncLLM(EngineClient):
         client_addresses: dict[str, str] | None = None,
         client_count: int = 1,
         client_index: int = 0,
+        **kwargs,  # mini-vLLM: accept and ignore mm_registry
     ) -> None:
         """
         Create an AsyncLLM.
@@ -76,7 +75,6 @@ class AsyncLLM(EngineClient):
             executor_class: an Executor impl, e.g. MultiprocExecutor.
             log_stats: Whether to log stats.
             usage_context: Usage context of the LLM.
-            mm_registry: Multi-modal registry.
             use_cached_outputs: Whether to use cached outputs.
             log_requests: Whether to log requests.
             start_engine_loop: Whether to start the engine loop.

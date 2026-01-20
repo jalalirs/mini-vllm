@@ -79,13 +79,20 @@ from vllm.model_executor.models.interfaces_base import (
     is_pooling_model,
     is_text_generation_model,
 )
-from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.multimodal.inputs import (
-    BatchedTensorInputs,
-    MultiModalKwargsItem,
-    PlaceholderRange,
-)
-from vllm.multimodal.utils import group_mm_kwargs_by_modality
+# mini-vLLM: multimodal support removed (text-only)
+# Type aliases for compatibility
+BatchedTensorInputs: TypeAlias = dict[str, Any]
+MultiModalKwargsItem: TypeAlias = dict[str, Any]
+PlaceholderRange: TypeAlias = tuple[int, int]
+
+
+def group_mm_kwargs_by_modality(
+    mm_kwargs: list[MultiModalKwargsItem],
+) -> Iterator[tuple[str, int, list[dict[str, Any]]]]:
+    """mini-vLLM: No-op for text-only models."""
+    return iter([])
+
+
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingType
 from vllm.sequence import IntermediateTensors
@@ -339,13 +346,11 @@ class GPUModelRunner(
         self.cascade_attn_enabled = not self.model_config.disable_cascade_attn
         self.is_mm_prefix_lm = self.model_config.is_mm_prefix_lm
 
-        # Multi-modal data support
-        self.mm_registry = MULTIMODAL_REGISTRY
+        # mini-vLLM: multimodal support removed (text-only)
+        self.mm_registry = None
         self.uses_mrope = model_config.uses_mrope
         self.uses_xdrope_dim = model_config.uses_xdrope_dim
-        self.supports_mm_inputs = self.mm_registry.supports_multimodal_inputs(
-            model_config
-        )
+        self.supports_mm_inputs = False  # Text-only
 
         if self.model_config.is_encoder_decoder:
             # Maximum length of the encoder input, only for encoder-decoder

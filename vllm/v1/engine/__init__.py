@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# mini-vLLM: multimodal support removed (text-only)
 
 import enum
 import time
@@ -10,7 +11,6 @@ import msgspec
 import torch
 
 from vllm.lora.request import LoRARequest
-from vllm.multimodal.inputs import MultiModalFeatureSpec
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingParams
 from vllm.v1.metrics.stats import SchedulerStats
@@ -53,7 +53,7 @@ class EngineCoreRequest(
 ):  # type: ignore[call-arg]
     request_id: str
     prompt_token_ids: list[int] | None
-    mm_features: list[MultiModalFeatureSpec] | None
+    mm_features: list[Any] | None  # mini-vLLM: always None (text-only)
     sampling_params: SamplingParams | None
     pooling_params: PoolingParams | None
     eos_token_id: int | None

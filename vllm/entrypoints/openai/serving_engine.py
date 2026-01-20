@@ -76,8 +76,10 @@ from vllm.inputs.parse import (
 from vllm.logger import init_logger
 from vllm.logprobs import Logprob, PromptLogprobs
 from vllm.lora.request import LoRARequest
-from vllm.multimodal import MultiModalDataDict
 from vllm.outputs import CompletionOutput, RequestOutput
+
+# mini-vLLM: multimodal removed (text-only)
+MultiModalDataDict: TypeAlias = dict[str, Any]
 # mini-vLLM: PoolingParams removed
 from vllm.reasoning import ReasoningParser, ReasoningParserManager
 from vllm.sampling_params import BeamSearchParams, SamplingParams

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# mini-vLLM: multimodal support removed (text-only)
 
 from collections.abc import MutableSequence
 from collections.abc import Sequence as GenericSequence
@@ -12,7 +13,6 @@ from typing_extensions import TypeVar
 from vllm.logger import init_logger
 from vllm.logprobs import PromptLogprobs, SampleLogprobs
 from vllm.lora.request import LoRARequest
-from vllm.multimodal.inputs import MultiModalPlaceholderDict
 from vllm.sequence import RequestMetrics
 from vllm.v1.metrics.stats import RequestStateStats
 
@@ -119,7 +119,7 @@ class RequestOutput:
         encoder_prompt_token_ids: list[int] | None = None,
         num_cached_tokens: int | None = None,
         *,
-        multi_modal_placeholders: MultiModalPlaceholderDict | None = None,
+        multi_modal_placeholders: dict | None = None,  # mini-vLLM: simplified type
         kv_transfer_params: dict[str, Any] | None = None,
         # Forward compatibility, code that uses args added in new release can
         # still run with older versions of vLLM without breaking.

@@ -12,9 +12,11 @@ from lmcache.v1.config import LMCacheEngineConfig as V1Config
 
 if TYPE_CHECKING:
     from vllm.config import ModelConfig
-    from vllm.multimodal.inputs import PlaceholderRange
     from vllm.v1.core.sched.output import NewRequestData
     from vllm.v1.request import Request
+
+# mini-vLLM: type alias for compatibility
+PlaceholderRange = tuple[int, int]
 
 logger = init_logger(__name__)
 ENGINE_NAME = "vllm-instance"

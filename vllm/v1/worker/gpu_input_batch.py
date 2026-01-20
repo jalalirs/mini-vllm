@@ -1,16 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 # Datastructures defining a GPU input batch
+# mini-vLLM: multimodal support removed (text-only)
 
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import torch
 
 from vllm.lora.request import LoRARequest
-from vllm.multimodal.inputs import MultiModalFeatureSpec
 from vllm.pooling_params import PoolingParams
+
+# mini-vLLM: type alias for compatibility
+MultiModalFeatureSpec = Any
 from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.utils import length_from_prompt_token_ids_or_embeds
 from vllm.utils.collection_utils import swap_dict_values

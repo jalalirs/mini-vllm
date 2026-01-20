@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# mini-vLLM: multimodal support removed (text-only)
 
 import os
 from collections.abc import Callable
@@ -11,8 +12,6 @@ import torch.nn as nn
 from vllm.config import VllmConfig, set_current_vllm_config
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
-from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.multimodal.cache import worker_receiver_cache_from_config
 from vllm.utils.import_utils import resolve_obj_by_qualname
 from vllm.utils.system_utils import update_environment_variables
 from vllm.v1.kv_cache_interface import KVCacheSpec
@@ -287,26 +286,9 @@ class WorkerWrapperBase:
                     extended_calls,
                 )
 
-        shared_worker_lock = kwargs.pop("shared_worker_lock", None)
-        if shared_worker_lock is None:
-            msg = (
-                "Missing `shared_worker_lock` argument from executor. "
-                "This argument is needed for mm_processor_cache_type='shm'."
-            )
-
-            mm_config = self.vllm_config.model_config.multimodal_config
-            if mm_config and mm_config.mm_processor_cache_type == "shm":
-                raise ValueError(msg)
-            else:
-                logger.warning_once(msg)
-
-            self.mm_receiver_cache = None
-        else:
-            self.mm_receiver_cache = worker_receiver_cache_from_config(
-                self.vllm_config,
-                MULTIMODAL_REGISTRY,
-                shared_worker_lock,
-            )
+        # mini-vLLM: multimodal cache removed (text-only)
+        kwargs.pop("shared_worker_lock", None)  # Accept and ignore
+        self.mm_receiver_cache = None
 
         with set_current_vllm_config(self.vllm_config):
             # To make vLLM config available during worker initialization

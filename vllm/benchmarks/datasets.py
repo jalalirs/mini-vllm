@@ -36,10 +36,15 @@ from typing_extensions import deprecated
 
 from vllm.lora.request import LoRARequest
 from vllm.lora.utils import get_adapter_absolute_path
-from vllm.multimodal import MultiModalDataDict
-from vllm.multimodal.image import convert_image_mode
 from vllm.tokenizers import TokenizerLike
+
 from vllm.utils.import_utils import PlaceholderModule
+
+
+# mini-vLLM: multimodal removed, inline helper for image mode conversion
+def _convert_image_mode(image: "Image.Image", mode: str) -> "Image.Image":
+    """Convert PIL image to specified mode."""
+    return image.convert(mode) if image.mode != mode else image
 
 try:
     from datasets import load_dataset
@@ -78,7 +83,7 @@ class SampleRequest:
     prompt: str | list[str]
     prompt_len: int
     expected_output_len: int
-    multi_modal_data: MultiModalDataDict | dict | list[dict] | None = None
+    multi_modal_data: dict | list[dict] | None = None  # mini-vLLM: simplified type
     lora_request: LoRARequest | None = None
     request_id: str | None = None
 
@@ -119,7 +124,7 @@ class BenchmarkDataset(ABC):
     def apply_multimodal_chat_transformation(
         self,
         prompt: str,
-        mm_content: MultiModalDataDict | dict | list[dict] | None = None,
+        mm_content: dict | list[dict] | None = None,  # mini-vLLM: simplified
     ) -> list[dict]:
         """
         Transform a prompt and optional multimodal content into a chat format.
@@ -318,7 +323,7 @@ def process_image(image: Any) -> Mapping[str, Any]:
     if isinstance(image, dict) and "bytes" in image:
         image = Image.open(BytesIO(image["bytes"]))
     if isinstance(image, Image.Image):
-        image = convert_image_mode(image, "RGB")
+        image = _convert_image_mode(image, "RGB")
         with io.BytesIO() as image_data:
             image.save(image_data, format="JPEG")
             image_base64 = base64.b64encode(image_data.getvalue()).decode("utf-8")

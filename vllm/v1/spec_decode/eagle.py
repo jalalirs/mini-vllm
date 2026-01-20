@@ -21,7 +21,6 @@ from vllm.logger import init_logger
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.model_loader import get_model
 from vllm.model_executor.models import supports_multimodal
-from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.platforms import current_platform
 from vllm.triton_utils import triton
 from vllm.utils.platform_utils import is_pin_memory_available
@@ -80,11 +79,9 @@ class EagleProposer:
         self.hidden_size = self.draft_model_config.get_hidden_size()
         self.inputs_embeds_size = self.draft_model_config.get_inputs_embeds_size()
 
-        # Multi-modal data support
-        self.mm_registry = MULTIMODAL_REGISTRY
-        self.supports_mm_inputs = self.mm_registry.supports_multimodal_inputs(
-            vllm_config.model_config
-        )
+        # mini-vLLM: multimodal support removed (text-only)
+        self.mm_registry = None
+        self.supports_mm_inputs = False
 
         self.attn_metadata_builder: AttentionMetadataBuilder | None = None
         self.draft_indexer_metadata_builder: AttentionMetadataBuilder | None = None

@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 
-from vllm.multimodal.inputs import MultiModalFeatureSpec
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingParams
 from vllm.utils import length_from_prompt_token_ids_or_embeds
@@ -38,7 +37,7 @@ class Request:
         client_index: int = 0,
         arrival_time: float | None = None,
         prompt_embeds: torch.Tensor | None = None,
-        mm_features: list[MultiModalFeatureSpec] | None = None,
+        mm_features: list[Any] | None = None,  # mini-vLLM: simplified type
         lora_request: Optional["LoRARequest"] = None,
         cache_salt: str | None = None,
         priority: int = 0,

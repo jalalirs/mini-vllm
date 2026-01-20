@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# mini-vLLM: multimodal support removed (text-only)
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Optional
-
-from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
@@ -26,9 +25,9 @@ class SchedulerInterface(ABC):
         kv_cache_config: "KVCacheConfig",
         structured_output_manager: "StructuredOutputManager",
         block_size: int,
-        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
         include_finished_set: bool = False,
         log_stats: bool = False,
+        **kwargs: Any,  # mini-vLLM: accept and ignore mm_registry
     ) -> None:
         raise NotImplementedError
 

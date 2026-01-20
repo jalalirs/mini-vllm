@@ -31,15 +31,16 @@ from .interfaces_base import VllmModel, is_pooling_model
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
     from vllm.model_executor.models.utils import WeightsMapper
-    from vllm.multimodal.inputs import MultiModalFeatureSpec
-    from vllm.multimodal.registry import _ProcessorFactories
     from vllm.sequence import IntermediateTensors
 else:
     VllmConfig = object
     WeightsMapper = object
-    MultiModalFeatureSpec = object
-    _ProcessorFactories = object
-    IntermediateTensors = object
+
+# mini-vLLM: type aliases for compatibility
+from typing import Any
+MultiModalFeatureSpec: TypeAlias = Any
+_ProcessorFactories: TypeAlias = Any
+IntermediateTensors = object
 
 logger = init_logger(__name__)
 

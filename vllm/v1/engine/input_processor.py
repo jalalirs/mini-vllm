@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# mini-vLLM: multimodal support removed (text-only)
 
 import time
 from collections.abc import Mapping
@@ -11,19 +12,12 @@ from vllm.inputs.parse import split_enc_dec_inputs
 from vllm.inputs.preprocess import InputPreprocessor
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
-from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
-from vllm.multimodal.cache import processor_cache_from_config
-from vllm.multimodal.inputs import MultiModalFeatureSpec, MultiModalUUIDDict
-from vllm.multimodal.parse import MultiModalDataParser
-from vllm.multimodal.processing import EncDecMultiModalProcessor
-from vllm.multimodal.utils import argsort_mm_positions
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingParams
 from vllm.tokenizers import TokenizerLike
 from vllm.tokenizers.mistral import MistralTokenizer
 from vllm.utils import length_from_prompt_token_ids_or_embeds, random_uuid
 from vllm.v1.engine import EngineCoreRequest
-from vllm.v1.metrics.stats import MultiModalCacheStats
 from vllm.v1.structured_output.backend_guidance import (
     has_guidance_unsupported_json_features,
     validate_guidance_grammar,
@@ -40,11 +34,12 @@ logger = init_logger(__name__)
 
 
 class InputProcessor:
+    # mini-vLLM: simplified for text-only (multimodal removed)
     def __init__(
         self,
         vllm_config: VllmConfig,
         tokenizer: TokenizerLike | None,
-        mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
+        **kwargs,  # Accept and ignore multimodal kwargs
     ) -> None:
         self.vllm_config = vllm_config
         self.model_config = vllm_config.model_config
@@ -54,14 +49,10 @@ class InputProcessor:
 
         self.generation_config_fields = self.model_config.try_get_generation_config()
 
-        self.mm_registry = mm_registry
-        self.mm_processor_cache = processor_cache_from_config(vllm_config, mm_registry)
-
+        # mini-vLLM: no multimodal registry or cache
         self.input_preprocessor = InputPreprocessor(
             self.model_config,
             tokenizer,
-            mm_registry,
-            mm_processor_cache=self.mm_processor_cache,
         )
 
     @property
@@ -372,39 +363,9 @@ class InputProcessor:
         self,
         request_id: str,
         prompt: PromptType,
-    ) -> MultiModalUUIDDict | None:
-        """Build per-item multimodal hash overrides when enabled. In this case,
-        multimodal data items are identified by their request id, modality and
-        index rather than their content.
-
-        Returns a dictionary of modality -> list[str] of overrides, or None if
-        disabled or no multimodal data is present.
-        """
-
-        def _extract_mm_data(p: PromptType):
-            if isinstance(p, dict) and "encoder_prompt" in p:
-                enc = p.get("encoder_prompt")
-                if isinstance(enc, dict):
-                    return enc.get("multi_modal_data")
-                return None
-            if isinstance(p, dict):
-                return p.get("multi_modal_data")
-            return None
-
-        mm_data = _extract_mm_data(prompt)
-        if not mm_data:
-            return None
-
-        mm_uuids: dict[str, list[str | None] | str] = {}
-        for modality, data in mm_data.items():
-            # Hash each item for embedding inputs.
-            n = (
-                len(data)
-                if isinstance(data, list) or MultiModalDataParser.is_embeddings(data)
-                else 1
-            )
-            mm_uuids[modality] = [f"{request_id}-{modality}-{i}" for i in range(n)]
-        return mm_uuids
+    ) -> dict | None:
+        # mini-vLLM: multimodal removed, always return None
+        return None
 
     def _get_mm_identifier(
         self,
@@ -464,39 +425,12 @@ class InputProcessor:
         if arrival_time is None:
             arrival_time = time.time()
 
-        # Optionally generate multimodal hash overrides to avoid hashing
-        # multimodal data items by their content as their identifiers.
+        # mini-vLLM: multimodal UUID handling removed (text-only)
 
-        # NOTE: when users explicitly turn off BOTH prefix caching and input
-        # processing caching, no multimodal features or embeddings will be
-        # reused across requests, therefore identifying multimodal data items
-        # by their content is no longer necessary, and we create uuids with
-        # request id-modality-index as multimodal hash overrides.
-        if (
-            self.model_config.multimodal_config
-            and self.model_config.multimodal_config.mm_processor_cache_gb == 0
-            and not self.cache_config.enable_prefix_caching
-        ):
-            mm_uuids = self._maybe_build_mm_uuids(request_id, prompt)
-        else:
-            # Otherwise, use user-provided uuids as multimodal hash overrides
-            # if provided.
-            self._validate_multi_modal_uuids(prompt)
-            if isinstance(prompt, dict):
-                mm_uuids = cast(
-                    MultiModalUUIDDict | None, prompt.get("multi_modal_uuids")
-                )
-            else:
-                mm_uuids = None
-
-        # Process inputs, which includes:
-        # 1. Tokenize text prompt, with LoRA request if one exists.
-        # 2. For multimodal models with a merged preprocessor, preprocess
-        #   multimodal data and expand prompt token ids accordingly.
+        # Process inputs (text-only tokenization)
         processed_inputs: ProcessorInputs = self.input_preprocessor.preprocess(
             prompt,
             tokenization_kwargs=tokenization_kwargs,
-            mm_uuids=mm_uuids,
         )
         from vllm.platforms import current_platform
 
@@ -538,32 +472,8 @@ class InputProcessor:
         else:
             pooling_params = params.clone()
 
-        # Multimodal related.
-        mm_features: list[MultiModalFeatureSpec] | None = None
-
-        if decoder_inputs["type"] == "multimodal":
-            decoder_mm_inputs = decoder_inputs["mm_kwargs"]
-            decoder_mm_positions = decoder_inputs["mm_placeholders"]
-            decoder_mm_hashes = decoder_inputs["mm_hashes"]
-
-            # Merge and flatten multimodal placeholders, hashes and inputs
-            # from dictionaries to lists, and sort them by each item's position
-            # in the input sequence.
-            sorted_mm_idxs = argsort_mm_positions(decoder_mm_positions)
-
-            mm_features = []
-            for modality, idx in sorted_mm_idxs:
-                mm_features.append(
-                    MultiModalFeatureSpec(
-                        data=decoder_mm_inputs[modality][idx],
-                        modality=modality,
-                        identifier=self._get_mm_identifier(
-                            decoder_mm_hashes[modality][idx],
-                            lora_request,
-                        ),
-                        mm_position=decoder_mm_positions[modality][idx],
-                    )
-                )
+        # mini-vLLM: multimodal feature processing removed (text-only)
+        mm_features = None
 
         return EngineCoreRequest(
             request_id=request_id,
@@ -609,9 +519,7 @@ class InputProcessor:
         )
         prompt_len = length_from_prompt_token_ids_or_embeds(prompt_ids, prompt_embeds)
         if not prompt_ids:
-            if prompt_type == "encoder" and model_config.is_multimodal_model:
-                pass  # Mllama may have empty encoder inputs for text-only data
-            elif prompt_inputs["type"] == "embeds":
+            if prompt_inputs["type"] == "embeds":
                 pass  # Prompt embeds should not have prompt_ids.
             else:
                 raise ValueError(f"The {prompt_type} prompt cannot be empty")
@@ -620,13 +528,9 @@ class InputProcessor:
         if tokenizer is not None:
             max_input_id = max(prompt_ids or [], default=0)
 
-            # NOTE: tokenizer.max_token_id is the tokenizer’s vocab size while
-            # self.model_config.get_vocab_size() is the model’s vocab size.
-            # For Qwen3 models, the language model has extra tokens that do
-            # not exist in the tokenizer, and vice versa for multimodal
-            # placeholder tokens in some multimodal models.
-            # See https://github.com/QwenLM/Qwen3/issues/29#issuecomment-1933720399 # noqa: E501
-            # and https://github.com/vllm-project/vllm/pull/22471#discussion_r2312251421 # noqa: E501
+            # NOTE: tokenizer.max_token_id is the tokenizer's vocab size while
+            # self.model_config.get_vocab_size() is the model's vocab size.
+            # For Qwen3 models, the language model has extra tokens.
 
             # Here we take the max of the two to determine if a token id is
             # truly out-of-vocabulary.
@@ -637,29 +541,11 @@ class InputProcessor:
 
         max_prompt_len = self.model_config.max_model_len
         if prompt_len > max_prompt_len:
-            if prompt_type == "encoder" and model_config.is_multimodal_model:
-                mm_registry = self.input_preprocessor.mm_registry
-                mm_processor = mm_registry.create_processor(
-                    model_config,
-                    tokenizer=tokenizer,
-                )
-                assert isinstance(mm_processor, EncDecMultiModalProcessor)
-
-                if mm_processor.pad_dummy_encoder_prompt:
-                    return  # Skip encoder length check for Whisper
-
-            if model_config.is_multimodal_model:
-                suggestion = (
-                    "Make sure that `max_model_len` is no smaller than the "
-                    "number of text tokens plus multimodal tokens. For image "
-                    "inputs, the number of image tokens depends on the number "
-                    "of images, and possibly their aspect ratios as well."
-                )
-            else:
-                suggestion = (
-                    "Make sure that `max_model_len` is no smaller than the "
-                    "number of text tokens."
-                )
+            # mini-vLLM: multimodal checks removed (text-only)
+            suggestion = (
+                "Make sure that `max_model_len` is no smaller than the "
+                "number of text tokens."
+            )
 
             raise ValueError(
                 f"The {prompt_type} prompt (length {prompt_len}) is "
@@ -671,10 +557,10 @@ class InputProcessor:
             # check that chunked prefill does not truncate them
             # max_batch_len = self.scheduler_config.max_num_batched_tokens
 
+        # mini-vLLM: multimodal check removed (text-only)
         if (
             prompt_len == max_prompt_len
             and prompt_type == "decoder"
-            and not model_config.is_multimodal_model
             and self.model_config.runner_type != "pooling"
         ):
             suggestion = (
@@ -687,8 +573,9 @@ class InputProcessor:
                 f"model length of {max_prompt_len}. {suggestion}"
             )
 
-    def stat_mm_cache(self) -> MultiModalCacheStats | None:
-        return self.input_preprocessor.stat_mm_cache()
+    # mini-vLLM: multimodal cache methods removed (text-only)
+    def stat_mm_cache(self) -> None:
+        return None
 
     def clear_mm_cache(self) -> None:
-        self.input_preprocessor.clear_mm_cache()
+        pass
