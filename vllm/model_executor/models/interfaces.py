@@ -19,7 +19,10 @@ from torch import Tensor
 from transformers.models.whisper.tokenization_whisper import LANGUAGES
 from typing_extensions import Self, TypeIs
 
-from vllm.config import ModelConfig, SpeechToTextConfig
+from vllm.config import ModelConfig
+
+# mini-vLLM: SpeechToText support removed
+SpeechToTextConfig = object
 from vllm.inputs import TokensPrompt
 from vllm.inputs.data import PromptType
 from vllm.logger import init_logger

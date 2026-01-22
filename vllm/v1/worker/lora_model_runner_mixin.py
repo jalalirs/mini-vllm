@@ -1,39 +1,51 @@
 # SPDX-License-Identifier: Apache-2.0
-# mini-vLLM: LoRA support removed, minimal stub only
-
-from contextlib import contextmanager
+# mini-vLLM: LoRA support removed - stub for compatibility
+from contextlib import nullcontext
 
 
 class LoRAModelRunnerMixin:
-    """Stub for LoRA model runner mixin. LoRA is not supported in mini-vLLM."""
+    """Stub LoRAModelRunnerMixin - LoRA support removed."""
 
-    lora_manager = None
-    supports_lora = False
-
-    def set_active_loras(self, *args, **kwargs):
+    def init_lora_manager(self, *args, **kwargs):
+        """No-op - LoRA removed."""
         pass
 
-    def add_lora(self, *args, **kwargs):
-        raise NotImplementedError("LoRA is not supported in mini-vLLM")
+    def set_lora_adapter(self, *args, **kwargs):
+        """No-op - LoRA removed."""
+        pass
 
-    def remove_lora(self, *args, **kwargs):
-        raise NotImplementedError("LoRA is not supported in mini-vLLM")
+    def add_lora_adapter(self, *args, **kwargs):
+        """No-op - LoRA removed."""
+        pass
 
-    @contextmanager
+    def remove_lora_adapter(self, *args, **kwargs):
+        """No-op - LoRA removed."""
+        pass
+
     def maybe_dummy_run_with_lora(self, *args, **kwargs):
-        """No-op context manager for LoRA dummy run."""
-        yield
+        """No-op context manager - LoRA removed."""
+        return nullcontext()
 
-    @contextmanager
-    def maybe_setup_dummy_loras(self, *args, **kwargs):
-        """No-op context manager for LoRA setup."""
-        yield
-
-    @contextmanager
-    def maybe_select_dummy_loras(self, *args, **kwargs):
-        """No-op context manager for LoRA selection."""
-        yield
+    def _create_lora_mapping(self, *args, **kwargs):
+        """No-op - LoRA removed."""
+        return None
 
     def maybe_remove_all_loras(self, *args, **kwargs):
-        """No-op for LoRA removal."""
+        """No-op - LoRA removed."""
         pass
+
+    def list_loras(self, *args, **kwargs):
+        """No-op - LoRA removed."""
+        return []
+
+    def add_lora(self, *args, **kwargs):
+        """No-op - LoRA removed."""
+        return True
+
+    def remove_lora(self, *args, **kwargs):
+        """No-op - LoRA removed."""
+        return True
+
+    def _load_lora(self, *args, **kwargs):
+        """No-op - LoRA removed."""
+        return None

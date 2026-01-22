@@ -17,11 +17,7 @@ def register_vllm_serve_api_routers(app: FastAPI):
             "This should NOT be used in production!"
         )
 
-    from vllm.entrypoints.serve.lora.api_router import (
-        attach_router as attach_lora_router,
-    )
-
-    attach_lora_router(app)
+    # mini-vLLM: LoRA router removed
     from vllm.entrypoints.serve.elastic_ep.api_router import (
         attach_router as attach_elastic_ep_router,
     )

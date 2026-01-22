@@ -14,14 +14,13 @@ from datetime import datetime
 from enum import IntEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, get_args
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import torch
 from pydantic import ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass
 
 import vllm.envs as envs
-from vllm.config.speculative import EagleModelTypes
 from vllm.logger import enable_trace_function_call, init_logger
 from vllm.transformers_utils.runai_utils import is_runai_obj_uri
 from vllm.utils import random_uuid
@@ -35,13 +34,11 @@ from .ec_transfer import ECTransferConfig
 from .kv_events import KVEventsConfig
 from .kv_transfer import KVTransferConfig
 from .load import LoadConfig
-from .lora import LoRAConfig
 from .model import ModelConfig
 from .observability import ObservabilityConfig
 from .parallel import ParallelConfig
 from .profiler import ProfilerConfig
 from .scheduler import SchedulerConfig
-from .speculative import SpeculativeConfig
 from .structured_outputs import StructuredOutputsConfig
 from .utils import SupportsHash, config
 
@@ -196,10 +193,9 @@ class VllmConfig:
     """Load configuration."""
     attention_config: AttentionConfig = Field(default_factory=AttentionConfig)
     """Attention configuration."""
-    lora_config: LoRAConfig | None = None
-    """LoRA configuration."""
-    speculative_config: SpeculativeConfig | None = None
-    """Speculative decoding configuration."""
+    # mini-vLLM: LoRA and speculative decoding removed - kept as None for compatibility
+    lora_config: Any = None
+    speculative_config: Any = None
     structured_outputs_config: StructuredOutputsConfig = Field(
         default_factory=StructuredOutputsConfig
     )
@@ -287,14 +283,6 @@ class VllmConfig:
             vllm_factors.append("None")
         if self.attention_config:
             vllm_factors.append(self.attention_config.compute_hash())
-        else:
-            vllm_factors.append("None")
-        if self.lora_config:
-            vllm_factors.append(self.lora_config.compute_hash())
-        else:
-            vllm_factors.append("None")
-        if self.speculative_config:
-            vllm_factors.append(self.speculative_config.compute_hash())
         else:
             vllm_factors.append("None")
         if self.structured_outputs_config:
@@ -524,9 +512,6 @@ class VllmConfig:
 
         self.cache_config.verify_with_parallel_config(self.parallel_config)
 
-        if self.lora_config is not None:
-            self.lora_config.verify_with_model_config(self.model_config)
-
         if self.quant_config is None and self.model_config is not None:
             self.quant_config = VllmConfig._get_quantization_config(
                 self.model_config, self.load_config
@@ -546,22 +531,6 @@ class VllmConfig:
                     "Async scheduling is not yet compatible with "
                     "pipeline_parallel_size > 1."
                 )
-            # Currently, async scheduling only support eagle speculative
-            # decoding.
-            if self.speculative_config is not None:
-                if self.speculative_config.method not in get_args(EagleModelTypes):
-                    raise ValueError(
-                        "Currently, async scheduling is only supported "
-                        "with EAGLE/MTP kind of speculative decoding"
-                    )
-                if self.speculative_config.disable_padded_drafter_batch:
-                    raise ValueError(
-                        "async scheduling for EAGLE/MTP kind of speculative "
-                        "decoding is enabled, but disable_padded_drafter_batch=True "
-                        "disable_padded_drafter_batch=True is not supported for "
-                        "this situation now. please set "
-                        "disable_padded_drafter_batch=Fasle"
-                    )
             if not executor_supports_async_sched:
                 raise ValueError(
                     "Currently, async scheduling only supports `mp`, `uni`, or "
@@ -570,14 +539,10 @@ class VllmConfig:
                 )
         elif self.scheduler_config.async_scheduling is None:
             # Enable async scheduling unless there is an incompatible option.
-            # NOTE: we won't reach here until async scheduling is enabled by default.
-            if (
-                self.parallel_config.pipeline_parallel_size > 1
-                or self.speculative_config is not None
-            ):
+            if self.parallel_config.pipeline_parallel_size > 1:
                 logger.warning(
-                    "Async scheduling is not yet supported with speculative decoding "
-                    " or pipeline_parallel_size > 1 and will be disabled."
+                    "Async scheduling is not yet supported with "
+                    "pipeline_parallel_size > 1 and will be disabled."
                 )
                 self.scheduler_config.async_scheduling = False
             elif not executor_supports_async_sched:
@@ -732,17 +697,6 @@ class VllmConfig:
             self.compilation_config.cudagraph_mode = CUDAGraphMode.NONE
 
         if self.cache_config.kv_sharing_fast_prefill:
-            if (
-                self.speculative_config is not None
-                and self.speculative_config.use_eagle()
-            ):
-                raise ValueError(
-                    "Fast prefill optimization for KV sharing is not "
-                    "compatible with EAGLE as EAGLE requires correct logits "
-                    "for all tokens while fast prefill gives incorrect logits "
-                    "for prompt tokens."
-                )
-
             logger.warning_once(
                 "--kv-sharing-fast-prefill requires changes on model side for "
                 "correctness and to realize prefill savings. "
@@ -909,14 +863,7 @@ class VllmConfig:
             self.model_config is not None
             and self.model_config.attention_chunk_size is not None
         ):
-            if (
-                self.speculative_config is not None
-                and self.speculative_config.use_eagle()
-            ):
-                # Hybrid KV cache manager is not yet supported with chunked
-                # local attention + eagle.
-                need_disable_hybrid_kv_cache_manager = True
-            elif not envs.VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE:
+            if not envs.VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE:
                 logger.warning(
                     "There is a latency regression when using chunked local"
                     " attention with the hybrid KV cache manager. Disabling"
@@ -1068,11 +1015,6 @@ class VllmConfig:
             )
             if max_cudagraph_capture_size is None:
                 decode_query_len = 1
-                if (
-                    self.speculative_config
-                    and self.speculative_config.num_speculative_tokens
-                ):
-                    decode_query_len += self.speculative_config.num_speculative_tokens
                 max_cudagraph_capture_size = min(
                     self.scheduler_config.max_num_seqs * decode_query_len * 2, 512
                 )
@@ -1294,7 +1236,6 @@ class VllmConfig:
     def __str__(self):
         return (
             f"model={self.model_config.model!r}, "
-            f"speculative_config={self.speculative_config!r}, "
             f"tokenizer={self.model_config.tokenizer!r}, "
             f"skip_tokenizer_init={self.model_config.skip_tokenizer_init}, "
             f"tokenizer_mode={self.model_config.tokenizer_mode}, "

@@ -14,7 +14,11 @@ from safetensors.torch import _TYPES as _SAFETENSORS_TO_TORCH_DTYPE
 
 import vllm.envs as envs
 from vllm.attention.backends.registry import AttentionBackendEnum
-from vllm.config.multimodal import MMCacheType, MMEncoderTPMode, MultiModalConfig
+# mini-vLLM: multimodal support removed
+from typing import Any as MultiModalConfig
+MMCacheType = str
+MMEncoderTPMode = str
+
 from vllm.config.pooler import PoolerConfig
 from vllm.config.scheduler import RunnerType
 from vllm.config.utils import config, getattr_iter
@@ -547,46 +551,8 @@ class ModelConfig:
             self.mm_processor_cache_gb = 0
             logger.info("Encoder-decoder model detected, disabling mm processor cache.")
 
-        # Init multimodal config if needed
-        if self._model_info.supports_multimodal:
-            if (
-                mm_encoder_tp_mode == "data"
-                and not self._model_info.supports_multimodal_encoder_tp_data
-            ):
-                logger.warning_once(
-                    "This model does not support `--mm-encoder-tp-mode data`. "
-                    "Falling back to `--mm-encoder-tp-mode weights`."
-                )
-                mm_encoder_tp_mode = "weights"
-
-            mm_config_kwargs = dict(
-                limit_per_prompt=limit_mm_per_prompt,
-                enable_mm_embeds=enable_mm_embeds,
-                media_io_kwargs=media_io_kwargs,
-                mm_processor_kwargs=mm_processor_kwargs,
-                mm_processor_cache_gb=mm_processor_cache_gb,
-                mm_processor_cache_type=mm_processor_cache_type,
-                mm_shm_cache_max_object_size_mb=mm_shm_cache_max_object_size_mb,
-                mm_encoder_tp_mode=mm_encoder_tp_mode,
-                mm_encoder_attn_backend=mm_encoder_attn_backend,
-                interleave_mm_strings=interleave_mm_strings,
-                skip_mm_profiling=skip_mm_profiling,
-                video_pruning_rate=video_pruning_rate,
-            )
-
-            mm_config_kwargs = {
-                k: v for k, v in mm_config_kwargs.items() if v is not None
-            }
-
-            self.multimodal_config = MultiModalConfig(**mm_config_kwargs)
-
-        # Multimodal GGUF models must use original repo for mm processing
-        if is_gguf(self.tokenizer) and self.is_multimodal_model:
-            raise ValueError(
-                "Loading a multimodal GGUF model needs to use original "
-                "tokenizer. Please specify the unquantized hf model's "
-                "repo name or path using the --tokenizer argument."
-            )
+        # mini-vLLM: multimodal support removed (text-only)
+        self.multimodal_config = None
 
         if self.disable_sliding_window:
             # Set after get_and_verify_max_len to ensure that max_model_len
@@ -1410,17 +1376,9 @@ class ModelConfig:
 
         return chunk_size
 
-    def get_multimodal_config(self) -> MultiModalConfig:
-        """
-        Get the multimodal configuration of the model.
-
-        Raises:
-            ValueError: If the model is not multimodal.
-        """
-        if self.multimodal_config is None:
-            raise ValueError("The model is not multimodal.")
-
-        return self.multimodal_config
+    def get_multimodal_config(self):
+        """mini-vLLM: multimodal support removed (text-only)."""
+        raise ValueError("The model is not multimodal.")
 
     def try_get_generation_config(self) -> dict[str, Any]:
         """

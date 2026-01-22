@@ -1,33 +1,27 @@
 # SPDX-License-Identifier: Apache-2.0
-# mini-vLLM: LoRA support removed, minimal stub only
+# mini-vLLM: LoRA support removed - stub for compatibility
+from dataclasses import dataclass
+from typing import Any
 
-import msgspec
 
+@dataclass
+class LoRARequest:
+    """Stub LoRARequest for compatibility - LoRA support removed in mini-vLLM."""
 
-class LoRARequest(
-    msgspec.Struct,
-    omit_defaults=True,
-    array_like=True,
-):
-    """Stub for LoRA request. LoRA is not supported in mini-vLLM."""
-
-    lora_name: str
-    lora_int_id: int
+    lora_name: str = ""
+    lora_int_id: int = 0
     lora_path: str = ""
-    base_model_name: str | None = msgspec.field(default=None)
-    tensorizer_config_dict: dict | None = None
+    long_lora_max_len: int | None = None
+    base_model_name: str | None = None
+    __hash__ = object.__hash__
 
     def __post_init__(self):
-        raise NotImplementedError("LoRA is not supported in mini-vLLM")
+        pass
 
     @property
-    def adapter_id(self):
-        return self.lora_int_id
-
-    @property
-    def name(self):
-        return self.lora_name
-
-    @property
-    def path(self):
+    def lora_local_path(self) -> str:
         return self.lora_path
+
+    @property
+    def is_empty(self) -> bool:
+        return True

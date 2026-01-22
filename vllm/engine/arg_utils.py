@@ -44,15 +44,12 @@ from vllm.config import (
     KVEventsConfig,
     KVTransferConfig,
     LoadConfig,
-    LoRAConfig,
     ModelConfig,
-    MultiModalConfig,
     ObservabilityConfig,
     ParallelConfig,
     PoolerConfig,
     ProfilerConfig,
     SchedulerConfig,
-    SpeculativeConfig,
     StructuredOutputsConfig,
     VllmConfig,
     get_attr_docs,
@@ -73,7 +70,46 @@ from vllm.config.model import (
     RunnerOption,
     TokenizerMode,
 )
-from vllm.config.multimodal import MMCacheType, MMEncoderTPMode
+# mini-vLLM: LoRA, speculative, and multimodal removed
+MMCacheType = str
+MMEncoderTPMode = str
+
+
+@dataclass
+class LoRAConfig:
+    """Stub for removed LoRA config."""
+    max_loras: int = 1
+    max_lora_rank: int = 16
+    default_mm_loras: dict | None = None
+    fully_sharded_loras: bool = False
+    max_cpu_loras: int | None = None
+    lora_dtype: str = "auto"
+    enable_tower_connector_lora: bool = False
+
+
+@dataclass
+class SpeculativeConfig:
+    """Stub for removed speculative config."""
+    pass
+
+
+@dataclass
+class MultiModalConfig:
+    """Stub for removed multimodal config."""
+    limit_per_prompt: dict | None = None
+    enable_mm_embeds: bool = True
+    interleave_mm_strings: bool = True
+    media_io_kwargs: dict | None = None
+    mm_processor_kwargs: dict | None = None
+    mm_processor_cache_gb: float = 1.0
+    mm_processor_cache_type: str = "disk"
+    mm_shm_cache_max_object_size_mb: int = 60
+    mm_encoder_tp_mode: str = "weights"
+    mm_encoder_attn_backend: str | None = None
+    skip_mm_profiling: bool = False
+    video_pruning_rate: float = 0.0
+
+
 from vllm.config.observability import DetailedTraceModules
 from vllm.config.parallel import DistributedExecutorBackend, ExpertPlacementStrategy
 from vllm.config.scheduler import SchedulerPolicy
@@ -1136,13 +1172,6 @@ class EngineArgs:
             title="VllmConfig",
             description=VllmConfig.__doc__,
         )
-        # We construct SpeculativeConfig using fields from other configs in
-        # create_engine_config. So we set the type to a JSON string here to
-        # delay the Pydantic validation that comes with SpeculativeConfig.
-        vllm_kwargs["speculative_config"]["type"] = optional_type(json.loads)
-        vllm_group.add_argument(
-            "--speculative-config", **vllm_kwargs["speculative_config"]
-        )
         vllm_group.add_argument(
             "--kv-transfer-config", **vllm_kwargs["kv_transfer_config"]
         )
@@ -1296,28 +1325,9 @@ class EngineArgs:
         self,
         target_model_config: ModelConfig,
         target_parallel_config: ParallelConfig,
-    ) -> SpeculativeConfig | None:
-        """Initializes and returns a SpeculativeConfig object based on
-        `speculative_config`.
-
-        This function utilizes `speculative_config` to create a
-        SpeculativeConfig object. The `speculative_config` can either be
-        provided as a JSON string input via CLI arguments or directly as a
-        dictionary from the engine.
-        """
-        if self.speculative_config is None:
-            return None
-
-        # Note(Shangming): These parameters are not obtained from the cli arg
-        # '--speculative-config' and must be passed in when creating the engine
-        # config.
-        self.speculative_config.update(
-            {
-                "target_model_config": target_model_config,
-                "target_parallel_config": target_parallel_config,
-            }
-        )
-        return SpeculativeConfig(**self.speculative_config)
+    ) -> None:
+        """mini-vLLM: Speculative decoding removed - always returns None."""
+        return None
 
     def create_engine_config(
         self,
@@ -1337,18 +1347,7 @@ class EngineArgs:
         # BEFORE creating ModelConfig, so the config is created with the target model
         # Skip speculator detection for cloud storage models (eg: S3, GCS) since
         # HuggingFace cannot load configs directly from S3 URLs. S3 models can still
-        # use speculators with explicit --speculative-config.
-        if not is_cloud_storage(self.model):
-            (self.model, self.tokenizer, self.speculative_config) = (
-                maybe_override_with_speculators(
-                    model=self.model,
-                    tokenizer=self.tokenizer,
-                    revision=self.revision,
-                    trust_remote_code=self.trust_remote_code,
-                    vllm_speculative_config=self.speculative_config,
-                )
-            )
-
+        # mini-vLLM: speculative decoding removed
         model_config = self.create_model_config()
         self.model = model_config.model
         self.tokenizer = model_config.tokenizer
@@ -1745,8 +1744,6 @@ class EngineArgs:
             device_config=device_config,
             load_config=load_config,
             attention_config=attention_config,
-            lora_config=lora_config,
-            speculative_config=speculative_config,
             structured_outputs_config=self.structured_outputs_config,
             observability_config=observability_config,
             compilation_config=compilation_config,
