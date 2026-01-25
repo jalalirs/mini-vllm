@@ -55,7 +55,9 @@ except ImportError:
     SafeTensorsFileLoader = fastsafetensors.placeholder_attr("SafeTensorsFileLoader")
     SingleGroup = fastsafetensors.placeholder_attr("SingleGroup")
 
-from vllm.model_executor.layers.quantization.torchao import torchao_version_at_least
+# mini-vLLM: torchao removed - stub function
+def torchao_version_at_least(version: str) -> bool:
+    return False
 
 logger = init_logger(__name__)
 

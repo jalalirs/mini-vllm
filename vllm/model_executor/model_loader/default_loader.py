@@ -14,9 +14,9 @@ from transformers.utils import SAFE_WEIGHTS_INDEX_NAME
 from vllm.config import ModelConfig
 from vllm.config.load import LoadConfig
 from vllm.logger import init_logger
-from vllm.model_executor.layers.quantization.torchao import torchao_version_at_least
 from vllm.model_executor.model_loader.base_loader import BaseModelLoader
 from vllm.model_executor.model_loader.weight_utils import (
+    torchao_version_at_least,
     download_safetensors_index_file_from_hf,
     download_weights_from_hf,
     fastsafetensors_weights_iterator,
