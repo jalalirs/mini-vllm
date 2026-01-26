@@ -18,14 +18,24 @@ from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.utils import length_from_prompt_token_ids_or_embeds
 from vllm.utils.collection_utils import swap_dict_values
 from vllm.v1.outputs import LogprobsTensors
-from vllm.v1.pool.metadata import PoolingMetadata, PoolingStates
+
+# mini-vLLM: Pooling removed - stub classes
+class PoolingMetadata:
+    pass
+
+class PoolingStates:
+    pass
+
 from vllm.v1.sample.logits_processor import (
     BatchUpdateBuilder,
     LogitsProcessors,
     MoveDirectionality,
 )
 from vllm.v1.sample.metadata import SamplingMetadata
-from vllm.v1.spec_decode.utils import is_spec_decode_unsupported
+
+# mini-vLLM: Spec decode removed - stub function
+def is_spec_decode_unsupported(sampling_params) -> bool:
+    return True
 from vllm.v1.utils import copy_slice
 from vllm.v1.worker.block_table import MultiGroupBlockTable
 

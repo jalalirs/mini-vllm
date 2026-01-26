@@ -149,17 +149,34 @@ from vllm.v1.outputs import (
     SamplerOutput,
     make_empty_encoder_model_runner_output,
 )
-from vllm.v1.pool.metadata import PoolingMetadata, PoolingStates
+# mini-vLLM: Pooling removed - stub classes
+class PoolingMetadata:
+    pass
+
+class PoolingStates:
+    pass
+
 from vllm.v1.sample.logits_processor import LogitsProcessors, build_logitsprocs
 from vllm.v1.sample.logits_processor.interface import LogitsProcessor
 from vllm.v1.sample.metadata import SamplingMetadata
-from vllm.v1.sample.rejection_sampler import RejectionSampler
+# mini-vLLM: rejection_sampler removed (spec_decode)
 from vllm.v1.sample.sampler import Sampler
-from vllm.v1.spec_decode.eagle import EagleProposer
-from vllm.v1.spec_decode.medusa import MedusaProposer
-from vllm.v1.spec_decode.metadata import SpecDecodeMetadata
-from vllm.v1.spec_decode.ngram_proposer import NgramProposer
-from vllm.v1.spec_decode.suffix_decoding import SuffixDecodingProposer
+
+# mini-vLLM: Spec decode removed - stub classes
+class EagleProposer:
+    pass
+
+class MedusaProposer:
+    pass
+
+class SpecDecodeMetadata:
+    pass
+
+class NgramProposer:
+    pass
+
+class SuffixDecodingProposer:
+    pass
 from vllm.v1.structured_output.utils import apply_grammar_bitmask
 from vllm.v1.utils import CpuGpuBuffer, record_function_or_nullcontext
 from vllm.v1.worker.cp_utils import check_attention_cp_compatibility

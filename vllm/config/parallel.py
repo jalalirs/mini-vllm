@@ -554,10 +554,9 @@ class ParallelConfig:
             # We use multiprocessing by default if world_size fits on the
             # current node and we aren't in a ray placement group.
 
-            from vllm.v1.executor import ray_utils
-
+            # mini-vLLM: Ray removed
             backend: DistributedExecutorBackend = "mp"
-            ray_found = ray_utils.ray_is_available()
+            ray_found = False
             if current_platform.is_tpu() and envs.VLLM_XLA_USE_SPMD:
                 backend = "uni"
             elif current_platform.is_cuda() and self.nnodes > 1:
@@ -643,9 +642,8 @@ class ParallelConfig:
                 " custom Executor subclass or its import path."
             )
         if self.use_ray:
-            from vllm.v1.executor import ray_utils
-
-            ray_utils.assert_ray_available()
+            # mini-vLLM: Ray removed
+            raise ValueError("Ray is not supported in mini-vLLM")
 
         if not current_platform.use_custom_allreduce():
             self.disable_custom_all_reduce = True

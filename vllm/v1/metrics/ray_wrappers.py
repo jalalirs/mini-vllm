@@ -4,7 +4,7 @@ import time
 
 from vllm.distributed.kv_transfer.kv_connector.v1.metrics import KVConnectorPrometheus
 from vllm.v1.metrics.loggers import PrometheusStatLogger
-from vllm.v1.spec_decode.metrics import SpecDecodingProm
+# mini-vLLM: spec_decode removed
 
 try:
     from ray import serve as ray_serve
@@ -157,14 +157,7 @@ class RayHistogramWrapper(RayPrometheusMetric):
         return self.metric.observe(value)
 
 
-class RaySpecDecodingProm(SpecDecodingProm):
-    """
-    RaySpecDecodingProm is used by RayMetrics to log to Ray metrics.
-    Provides the same metrics as SpecDecodingProm but uses Ray's
-    util.metrics library.
-    """
-
-    _counter_cls = RayCounterWrapper
+# mini-vLLM: spec_decode removed
 
 
 class RayKVConnectorPrometheus(KVConnectorPrometheus):
@@ -185,7 +178,7 @@ class RayPrometheusStatLogger(PrometheusStatLogger):
     _gauge_cls = RayGaugeWrapper
     _counter_cls = RayCounterWrapper
     _histogram_cls = RayHistogramWrapper
-    _spec_decoding_cls = RaySpecDecodingProm
+    # mini-vLLM: spec_decode removed
     _kv_connector_cls = RayKVConnectorPrometheus
 
     @staticmethod

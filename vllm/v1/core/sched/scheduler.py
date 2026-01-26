@@ -49,7 +49,7 @@ from vllm.v1.metrics.stats import (
 )
 from vllm.v1.outputs import DraftTokenIds, KVConnectorOutput, ModelRunnerOutput
 from vllm.v1.request import Request, RequestStatus
-from vllm.v1.spec_decode.metrics import SpecDecodingStats
+# mini-vLLM: spec_decode removed
 from vllm.v1.structured_output import StructuredOutputManager
 from vllm.v1.utils import record_function_or_nullcontext
 
@@ -1074,7 +1074,7 @@ class Scheduler(SchedulerInterface):
             perf_stats = self.perf_metrics.get_step_perf_stats_per_gpu(scheduler_output)
 
         outputs: dict[int, list[EngineCoreOutput]] = defaultdict(list)
-        spec_decoding_stats: SpecDecodingStats | None = None
+        # mini-vLLM: spec_decode removed
         kv_connector_stats: KVConnectorStats | None = (
             kv_connector_output.kv_connector_stats if kv_connector_output else None
         )
@@ -1132,11 +1132,7 @@ class Scheduler(SchedulerInterface):
                 # the scheduled spec tokens count and so is similarly adjusted.
                 if request.num_output_placeholders > 0:
                     request.num_output_placeholders -= num_rejected
-                spec_decoding_stats = self.make_spec_decoding_stats(
-                    spec_decoding_stats,
-                    num_draft_tokens=num_draft_tokens,
-                    num_accepted_tokens=num_accepted,
-                )
+                # mini-vLLM: spec_decoding_stats removed
 
             stopped = False
             new_logprobs = None
@@ -1269,7 +1265,8 @@ class Scheduler(SchedulerInterface):
 
         if (
             stats := self.make_stats(
-                spec_decoding_stats, kv_connector_stats, cudagraph_stats, perf_stats
+                # mini-vLLM: spec_decoding_stats removed
+                kv_connector_stats, cudagraph_stats, perf_stats
             )
         ) is not None:
             # Return stats to only one of the front-ends.
@@ -1489,7 +1486,7 @@ class Scheduler(SchedulerInterface):
 
     def make_stats(
         self,
-        spec_decoding_stats: SpecDecodingStats | None = None,
+        # mini-vLLM: spec_decode removed
         kv_connector_stats: KVConnectorStats | None = None,
         cudagraph_stats: CUDAGraphStat | None = None,
         perf_stats: PerfStats | None = None,
@@ -1504,7 +1501,7 @@ class Scheduler(SchedulerInterface):
             if self.kv_metrics_collector is not None
             else []
         )
-        spec_stats = spec_decoding_stats
+        # mini-vLLM: spec_decode removed
         connector_stats_payload = (
             kv_connector_stats.data if kv_connector_stats else None
         )
@@ -1515,26 +1512,13 @@ class Scheduler(SchedulerInterface):
             prefix_cache_stats=prefix_cache_stats,
             connector_prefix_cache_stats=connector_prefix_cache_stats,
             kv_cache_eviction_events=eviction_events,
-            spec_decoding_stats=spec_stats,
+            # mini-vLLM: spec_decode removed
             kv_connector_stats=connector_stats_payload,
             cudagraph_stats=cudagraph_stats,
             perf_stats=perf_stats,
         )
 
-    def make_spec_decoding_stats(
-        self,
-        spec_decoding_stats: SpecDecodingStats | None,
-        num_draft_tokens: int,
-        num_accepted_tokens: int,
-    ) -> SpecDecodingStats | None:
-        if not self.log_stats:
-            return None
-        if spec_decoding_stats is None:
-            spec_decoding_stats = SpecDecodingStats.new(self.num_spec_tokens)
-        spec_decoding_stats.observe_draft(
-            num_draft_tokens=num_draft_tokens, num_accepted_tokens=num_accepted_tokens
-        )
-        return spec_decoding_stats
+    # mini-vLLM: make_spec_decoding_stats removed
 
     def shutdown(self) -> None:
         if self.kv_event_publisher:

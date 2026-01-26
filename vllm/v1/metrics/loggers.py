@@ -27,7 +27,7 @@ from vllm.v1.metrics.stats import (
     MultiModalCacheStats,
     SchedulerStats,
 )
-from vllm.v1.spec_decode.metrics import SpecDecodingLogging, SpecDecodingProm
+# mini-vLLM: spec_decode removed
 
 logger = init_logger(__name__)
 
@@ -105,7 +105,7 @@ class LoggingStatLogger(StatLoggerBase):
         self.connector_prefix_caching_metrics = CachingMetrics()
         self.mm_caching_metrics = CachingMetrics()
 
-        self.spec_decoding_logging = SpecDecodingLogging()
+        # mini-vLLM: spec_decode removed
         kv_transfer_config = self.vllm_config.kv_transfer_config
         self.kv_connector_logging = KVConnectorLogging(kv_transfer_config)
         self.cudagraph_logging = None
@@ -171,8 +171,7 @@ class LoggingStatLogger(StatLoggerBase):
                     scheduler_stats.connector_prefix_cache_stats
                 )
 
-            if scheduler_stats.spec_decoding_stats is not None:
-                self.spec_decoding_logging.observe(scheduler_stats.spec_decoding_stats)
+            # mini-vLLM: spec_decode removed
             if kv_connector_stats := scheduler_stats.kv_connector_stats:
                 self.kv_connector_logging.observe(kv_connector_stats)
             if (
@@ -259,7 +258,7 @@ class LoggingStatLogger(StatLoggerBase):
             *log_args,
         )
 
-        self.spec_decoding_logging.log(log_fn=log_fn)
+        # mini-vLLM: spec_decode removed
         self.kv_connector_logging.log(log_fn=log_fn)
         if self.cudagraph_logging is not None:
             self.cudagraph_logging.log(log_fn=log_fn)
@@ -388,7 +387,7 @@ class PrometheusStatLogger(AggregateStatLoggerBase):
     _gauge_cls = Gauge
     _counter_cls = Counter
     _histogram_cls = Histogram
-    _spec_decoding_cls = SpecDecodingProm
+    # mini-vLLM: spec_decode removed
     _kv_connector_cls = KVConnectorPrometheus
 
     def __init__(
@@ -416,9 +415,7 @@ class PrometheusStatLogger(AggregateStatLoggerBase):
             idx: [model_name, str(idx)] for idx in engine_indexes
         }
 
-        self.spec_decoding_prom = self._spec_decoding_cls(
-            vllm_config.speculative_config, labelnames, per_engine_labelvalues
-        )
+        # mini-vLLM: spec_decode removed
         self.kv_connector_prom = self._kv_connector_cls(
             vllm_config, labelnames, per_engine_labelvalues
         )
@@ -1055,10 +1052,7 @@ class PrometheusStatLogger(AggregateStatLoggerBase):
                     scheduler_stats.connector_prefix_cache_stats.hits
                 )
 
-            if scheduler_stats.spec_decoding_stats is not None:
-                self.spec_decoding_prom.observe(
-                    scheduler_stats.spec_decoding_stats, engine_idx
-                )
+            # mini-vLLM: spec_decoding_stats removed
 
             if scheduler_stats.kv_connector_stats is not None:
                 self.kv_connector_prom.observe(
