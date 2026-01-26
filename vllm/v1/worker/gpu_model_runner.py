@@ -109,7 +109,10 @@ from vllm.utils.torch_utils import (
     kv_cache_dtype_str_to_dtype,
     supports_dynamo,
 )
-from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadataBuilder
+# mini-vLLM: GDN attention removed - stub class
+class GDNAttentionMetadataBuilder:
+    pass
+
 from vllm.v1.attention.backends.utils import (
     AttentionCGSupport,
     AttentionMetadataBuilder,

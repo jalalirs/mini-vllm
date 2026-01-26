@@ -34,50 +34,32 @@ class _AttentionBackendEnumMeta(EnumMeta):
 class AttentionBackendEnum(Enum, metaclass=_AttentionBackendEnumMeta):
     """Enumeration of all supported attention backends.
 
-    The enum value is the default class path, but this can be overridden
-    at runtime using register_backend().
-
-    To get the actual backend class (respecting overrides), use:
-        backend.get_class()
+    mini-vLLM: Only FLASH_ATTN supported for CUDA/H100.
     """
 
     FLASH_ATTN = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
-    TRITON_ATTN = "vllm.v1.attention.backends.triton_attn.TritonAttentionBackend"
-    ROCM_ATTN = "vllm.v1.attention.backends.rocm_attn.RocmAttentionBackend"
-    ROCM_AITER_MLA = "vllm.v1.attention.backends.mla.rocm_aiter_mla.AiterMLABackend"
-    ROCM_AITER_TRITON_MLA = (
-        "vllm.v1.attention.backends.mla.aiter_triton_mla.AiterTritonMLABackend"
-    )
-    ROCM_AITER_FA = (
-        "vllm.v1.attention.backends.rocm_aiter_fa.AiterFlashAttentionBackend"
-    )
-    ROCM_AITER_MLA_SPARSE = (
-        "vllm.v1.attention.backends.mla.rocm_aiter_mla_sparse.ROCMAiterMLASparseBackend"
-    )
+    # mini-vLLM: Removed backends kept as stubs pointing to FLASH_ATTN
+    TRITON_ATTN = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    ROCM_ATTN = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    ROCM_AITER_MLA = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    ROCM_AITER_TRITON_MLA = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    ROCM_AITER_FA = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    ROCM_AITER_MLA_SPARSE = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
     TORCH_SDPA = ""  # this tag is only used for ViT
-    FLASHINFER = "vllm.v1.attention.backends.flashinfer.FlashInferBackend"
-    FLASHINFER_MLA = (
-        "vllm.v1.attention.backends.mla.flashinfer_mla.FlashInferMLABackend"
-    )
-    TRITON_MLA = "vllm.v1.attention.backends.mla.triton_mla.TritonMLABackend"
-    CUTLASS_MLA = "vllm.v1.attention.backends.mla.cutlass_mla.CutlassMLABackend"
-    FLASHMLA = "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend"
-    FLASHMLA_SPARSE = (
-        "vllm.v1.attention.backends.mla.flashmla_sparse.FlashMLASparseBackend"
-    )
-    FLASH_ATTN_MLA = "vllm.v1.attention.backends.mla.flashattn_mla.FlashAttnMLABackend"
-    PALLAS = "vllm.v1.attention.backends.pallas.PallasAttentionBackend"
-    IPEX = "vllm.v1.attention.backends.ipex.IpexAttentionBackend"
-    NO_ATTENTION = "vllm.v1.attention.backends.no_attention.NoAttentionBackend"
-    FLEX_ATTENTION = "vllm.v1.attention.backends.flex_attention.FlexAttentionBackend"
-    TREE_ATTN = "vllm.v1.attention.backends.tree_attn.TreeAttentionBackend"
-    ROCM_AITER_UNIFIED_ATTN = (
-        "vllm.v1.attention.backends.rocm_aiter_unified_attn."
-        "RocmAiterUnifiedAttentionBackend"
-    )
-    CPU_ATTN = "vllm.v1.attention.backends.cpu_attn.CPUAttentionBackend"
-    # Placeholder for third-party/custom backends - must be registered before use
-    # set to None to avoid alias with other backend, whose value is an empty string
+    FLASHINFER = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    FLASHINFER_MLA = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    TRITON_MLA = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    CUTLASS_MLA = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    FLASHMLA = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    FLASHMLA_SPARSE = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    FLASH_ATTN_MLA = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    PALLAS = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    IPEX = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    NO_ATTENTION = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    FLEX_ATTENTION = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    TREE_ATTN = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    ROCM_AITER_UNIFIED_ATTN = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+    CPU_ATTN = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
     CUSTOM = None
 
     def get_path(self, include_classname: bool = True) -> str:
@@ -125,22 +107,17 @@ class AttentionBackendEnum(Enum, metaclass=_AttentionBackendEnumMeta):
 
 
 class MambaAttentionBackendEnum(Enum, metaclass=_AttentionBackendEnumMeta):
-    """Enumeration of all supported mamba attention backends.
+    """Enumeration of mamba attention backends.
 
-    The enum value is the default class path, but this can be overridden
-    at runtime using register_backend().
-
-    To get the actual backend class (respecting overrides), use:
-        backend.get_class()
+    mini-vLLM: Mamba backends removed - stubs only.
     """
 
-    MAMBA1 = "vllm.v1.attention.backends.mamba1_attn.Mamba1AttentionBackend"
-    MAMBA2 = "vllm.v1.attention.backends.mamba2_attn.Mamba2AttentionBackend"
-    SHORT_CONV = "vllm.v1.attention.backends.short_conv_attn.ShortConvAttentionBackend"
-    LINEAR = "vllm.v1.attention.backends.linear_attn.LinearAttentionBackend"
-    GDN_ATTN = "vllm.v1.attention.backends.gdn_attn.GDNAttentionBackend"
-    # Placeholder for third-party/custom backends - must be registered before use
-    # set to None to avoid alias with other backend, whose value is an empty string
+    # mini-vLLM: Mamba backends removed, kept as stubs
+    MAMBA1 = ""
+    MAMBA2 = ""
+    SHORT_CONV = ""
+    LINEAR = ""
+    GDN_ATTN = ""
     CUSTOM = None
 
     def get_path(self, include_classname: bool = True) -> str:

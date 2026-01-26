@@ -17,7 +17,9 @@ from vllm.logger import init_logger
 from vllm.model_executor.model_loader.weight_utils import sharded_weight_loader
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.utils.torch_utils import direct_register_custom_op
-from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata
+# mini-vLLM: GDN attention removed - stub class
+class GDNAttentionMetadata:
+    pass
 
 from .fla.ops.kda import (
     FusedRMSNormGated,
